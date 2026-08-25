@@ -5,6 +5,8 @@ config*
 # Логи работы скриптов
 bot.log
 *.log
+nohup.out
+!debug.log
 
 # Окружение и системные файлы
 __pycache__/
