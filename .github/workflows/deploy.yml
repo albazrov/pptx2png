@@ -1,31 +1,53 @@
-name: CI/CD pptx2png on: push: branches: - test - main # Ваша рабочая ветка (замените на 
-      master, если используете её)
-permissions: contents: write jobs: deploy-and-test: runs-on: [self-hosted, raspberry]
+name: CI/CD pptx2png
+
+on:
+  push:
+    branches:
+      - test
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-and-test:
+    runs-on: [self-hosted, raspberry]
     
-    steps: - name: Checkout code uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       # --- ЛОГИКА ДЛЯ ТЕСТОВОЙ ВЕТКИ ---
-      - name: Deploy and Test on Test Branch if: github.ref == 'refs/heads/test' run: |
+      - name: Deploy and Test on Test Branch
+        if: github.ref == 'refs/heads/test'
+        run: |
           # 1. Синхронизируем код в тестовую папку проекта
           rsync -av --exclude='.git*' ./ /home/pi/app/pptx2png/test/
           
           cd /home/pi/app/pptx2png/test/
           
-          # 2. Запуск через общее виртуальное окружение с записью лога Замените main.py 
-          # на имя вашего главного скрипта в этом проекте
-          /home/pi/.venv/bin/python3 main.py > debug.log 2>&1 || true
+          # 2. Запуск бота ровно на 15 секунд для проверки инициализации и сбора логов
+          timeout 15s /home/pi/.venv/bin/python3 bot.py > debug.log 2>&1 || true
           
           # 3. Копируем лог назад в рабочую зону GitHub Runner
-          cp debug.log ${{ github.workspace }}/debug.log - name: Commit and Push Log to 
-      GitHub
-        if: github.ref == 'refs/heads/test' run: | git config --global user.name 
-          "Raspberry Runner" git config --global user.email "runner@raspberry.local"
+          cp debug.log ${{ github.workspace }}/debug.log
+
+      - name: Commit and Push Log to GitHub
+        if: github.ref == 'refs/heads/test'
+        run: |
+          git config --global user.name "Raspberry Runner"
+          git config --global user.email "runner@raspberry.local"
           
-          if [ -f debug.log ]; then git add debug.log git commit -m "Chore: update 
-            debug.log [skip ci]" || echo "No changes" git push origin test
+          if [ -f debug.log ]; then
+            git add debug.log
+            git commit -m "Chore: update debug.log [skip ci]" || echo "No changes"
+            git push origin test
           fi
+
       # --- ЛОГИКА ДЛЯ РАБОЧЕЙ ВЕТКИ ---
-      - name: Deploy to Production Branch if: github.ref == 'refs/heads/main' run: |
+      - name: Deploy to Production Branch
+        if: github.ref == 'refs/heads/main'
+        run: |
           # Синхронизируем проверенный код в продакшн папку проекта
-          rsync -av --exclude='.git*' --exclude='debug.log' ./ 
-          /home/pi/app/pptx2png/prod/ echo "Project pptx2png successfully deployed to 
-          production!"
+          rsync -av --exclude='.git*' --exclude='debug.log' ./ /home/pi/app/pptx2png/prod/
+          echo "Project pptx2png successfully deployed to production!"
