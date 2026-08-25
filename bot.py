@@ -11,6 +11,8 @@ from aiogram.types import FSInputFile, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
+# Test CI/CD
+
 # ИМПОРТ НАШИХ КАСТОМНЫХ МОДУЛЕЙ
 import converter_engine
 from user_manager import UserManager
