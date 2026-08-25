@@ -53,4 +53,10 @@ jobs:
           # 2. Автоматический перезапуск продакшн-бота через manage.sh
           cd /home/pi/app/pptx2png/prod/
           chmod +x manage.sh
-          ./manage.sh restart || echo "Failed to restart, check manage.sh"
+          
+          # Отвязываем фоновый процесс от сессии GitHub Runner
+          env RUNNER_TRACKING_ID=0 ./manage.sh restart || echo "Failed to restart, check manage.sh"
+          
+          # Проверяем статус для логов GitHub Actions
+          sleep 1
+          ./manage.sh status
