@@ -17,13 +17,13 @@ case "$1" in
         echo "🚀 Запуск бота..."
         init_ram_disk
         
-        # Точная проверка: ищем только запущенный python-процесс с нашим ботом
-        if pgrep -f "python3.*$BOT_SCRIPT" > /dev/null; then
+        # Точная проверка: ищем процесс, запущенный ИМЕННО из этой конкретной папки
+        if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
             echo "⚠️ Бот уже запущен!"
             exit 1
         fi
         
-        # Запуск из виртуального окружения (проверяем локально или в корне пользователя)
+        # Запуск из виртуального окружения
         if [ -f "$PROJECT_DIR/.venv/bin/python3" ]; then
             PYTHON_EXEC="$PROJECT_DIR/.venv/bin/python3"
         elif [ -f "$HOME/.venv/bin/python3" ]; then
@@ -35,7 +35,7 @@ case "$1" in
         nohup "$PYTHON_EXEC" "$PROJECT_DIR/$BOT_SCRIPT" > "$LOG_FILE" 2>&1 &
         
         sleep 1.5
-        if pgrep -f "python3.*$BOT_SCRIPT" > /dev/null; then
+        if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
             echo "✅ Бот успешно запущен в фоне."
             echo "📄 Логи пишутся в RAM: $LOG_FILE"
         else
@@ -45,8 +45,8 @@ case "$1" in
         
     stop)
         echo "🛑 Остановка бота..."
-        # Находим конкретный PID python-процесса бота
-        BOT_PID=$(pgrep -f "python3.*$BOT_SCRIPT")
+        # Находим PID python-процесса конкретно этого бота
+        BOT_PID=$(pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT")
         if [ -n "$BOT_PID" ]; then
             kill $BOT_PID
             echo "✅ Бот успешно остановлен."
@@ -62,8 +62,8 @@ case "$1" in
         ;;
         
     status)
-        if pgrep -f "python3.*$BOT_SCRIPT" > /dev/null; then
-            PID=$(pgrep -f "python3.*$BOT_SCRIPT" | head -n 1)
+        if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
+            PID=$(pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" | head -n 1)
             echo "🟢 Бот РАБОТАЕТ (PID: $PID)"
             echo "📊 Использование RAM-диска папки задач:"
             du -sh /dev/shm/pptx2png_tasks 2>/dev/null
@@ -97,4 +97,3 @@ case "$1" in
 esac
 
 exit 0
-
