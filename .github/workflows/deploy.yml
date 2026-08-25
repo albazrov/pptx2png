@@ -21,15 +21,14 @@ jobs:
       - name: Deploy and Test on Test Branch
         if: github.ref == 'refs/heads/test'
         run: |
-          # 1. Синхронизируем код в тестовую папку проекта
-          rsync -av --exclude='.git*' ./ /home/pi/app/pptx2png/test/
+          # Копируем код, игнорируя локальный рабочий конфиг тестовой папки
+          rsync -av --exclude='.git*' --exclude='config*' --exclude='allowed_users*' ./ /home/pi/app/pptx2png/test/
           
           cd /home/pi/app/pptx2png/test/
           
-          # 2. Запуск бота ровно на 15 секунд для проверки инициализации и сбора логов
+          # Запуск тестового бота ровно на 15 секунд
           timeout 15s /home/pi/.venv/bin/python3 bot.py > debug.log 2>&1 || true
           
-          # 3. Копируем лог назад в рабочую зону GitHub Runner
           cp debug.log ${{ github.workspace }}/debug.log
 
       - name: Commit and Push Log to GitHub
@@ -44,10 +43,14 @@ jobs:
             git push origin test
           fi
 
-      # --- ЛОГИКА ДЛЯ РАБОЧЕЙ ВЕТКИ ---
+      # --- ЛОГИКА ДЛЯ РАБОЧЕЙ ВЕТКИ (ПРОДАКШН) ---
       - name: Deploy to Production Branch
         if: github.ref == 'refs/heads/main'
         run: |
-          # Синхронизируем проверенный код в продакшн папку проекта
-          rsync -av --exclude='.git*' --exclude='debug.log' ./ /home/pi/app/pptx2png/prod/
-          echo "Project pptx2png successfully deployed to production!"
+          # 1. Синхронизируем код, строго исключая перезапись боевого config/allowed_users
+          rsync -av --exclude='.git*' --exclude='debug.log' --exclude='config*' --exclude='allowed_users*' ./ /home/pi/app/pptx2png/prod/
+          
+          # 2. Автоматический перезапуск продакшн-бота через manage.sh
+          cd /home/pi/app/pptx2png/prod/
+          chmod +x manage.sh
+          ./manage.sh restart || echo "Failed to restart, check manage.sh"
