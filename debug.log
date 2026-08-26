@@ -1,8 +1,13 @@
 warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
-2026-08-26 00:12:42,645 - INFO - Модульный бот запущен на /dev/shm...
-2026-08-26 00:12:42,647 - INFO - Start polling
-2026-08-26 00:12:43,089 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-26 00:12:44,290 - WARNING - Received SIGTERM signal
-2026-08-26 00:12:44,291 - WARNING - Received SIGTERM signal
-2026-08-26 00:12:44,292 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-26 00:12:44,292 - INFO - Polling stopped
+2026-08-26 10:24:07,719 - INFO - Модульный бот запущен на /dev/shm...
+2026-08-26 10:24:07,720 - INFO - Start polling
+2026-08-26 10:24:08,162 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-26 10:24:12,403 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2026-08-26 10:24:12,404 - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8498658115)
+2026-08-26 10:24:17,918 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2026-08-26 10:24:17,919 - WARNING - Sleep for 1.250527 seconds and try again... (tryings = 1, bot id = 8498658115)
+2026-08-26 10:24:23,924 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2026-08-26 10:24:23,925 - WARNING - Sleep for 1.558278 seconds and try again... (tryings = 2, bot id = 8498658115)
+2026-08-26 10:24:24,366 - WARNING - Received SIGTERM signal
+2026-08-26 10:24:24,367 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-26 10:24:24,368 - INFO - Polling stopped
