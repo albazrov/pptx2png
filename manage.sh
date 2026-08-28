@@ -21,24 +21,24 @@ fi
 echo "PYTHON_EXEC  = $PYTHON_EXEC"
 
 # ОПРЕДЕЛЕНИЕ ПУТИ К RAM-ДИСКУ С УЧЕТОМ ОКРУЖЕНИЯ PPTX2PNG:
-# Если передан $2 — берем его. Если нет — строим путь динамически с ENV_NAME.
 if [ -n "$2" ]; then
     SHM_DIR="$2"
-    EXTRA_ARGS="--shm-dir $2"
 else
     SHM_DIR=${SHM_DIR:-"/dev/shm/pptx2png_tasks/$ENV_NAME"}
-    EXTRA_ARGS="--shm-dir $SHM_DIR"
 fi
-echo "EXTRA_ARGS   = $EXTRA_ARGS"
 
-# В новом bot.py логи по умолчанию создаются в подпапке logs
+# УПРАВЛЯЮЩИЙ СКРИПТ САМ ОПРЕДЕЛЯЕТ ПУТЬ К ЛОГАМ И ПЕРЕДАЕТ ЕГО БОТУ
 LOG_DIR="$SHM_DIR/logs"
 LOG_FILE="$LOG_DIR/bot.log"
 DEBUG_LOG_FILE="$LOG_DIR/debug.log"
-# Лог системного вывода (stdout/stderr самого процесса nohup)
 NOHUP_LOG="$LOG_DIR/sys_nohup.log"
 
-echo "LOG_FILE     = $LOG_FILE"
+# Формируем аргументы запуска: явно передаем И подпапку памяти, И подпапку логов
+EXTRA_ARGS="--shm-dir $SHM_DIR --log-dir $LOG_DIR"
+
+echo "SHM_DIR      = $SHM_DIR"
+echo "LOG_DIR      = $LOG_DIR"
+echo "EXTRA_ARGS   = $EXTRA_ARGS"
 
 case "$1" in
     start)
