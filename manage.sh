@@ -2,13 +2,12 @@
 
 # Пути к файлам и папкам
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
-BOT_SCRIPT="bot_ppt2png.py"
+BOT_SCRIPT="bot.py" # Поменяли имя на актуальное bot.py
 
 echo "PROJECT_DIR  = $PROJECT_DIR"
 echo "BOT_SCRIPT   = $BOT_SCRIPT"
 
 ENV_NAME=$(basename "$PROJECT_DIR")
-
 echo "ENV_NAME     = $ENV_NAME"
 
 # Определяем бинарник Python с проверкой прав на выполнение (-x)
@@ -19,41 +18,50 @@ elif [ -x "$HOME/.venv/bin/python3" ]; then
 else
     PYTHON_EXEC="python3"
 fi
-
 echo "PYTHON_EXEC  = $PYTHON_EXEC"
 
-# УНИВЕРСАЛЬНОЕ И БЕЗОПАСНОЕ ОПРЕДЕЛЕНИЕ ПУТИ:
-# Если передан $2 — берем его. Если нет — парсим config.json напрямую через быстрый однострочник Python.
+# ОПРЕДЕЛЕНИЕ ПУТИ К RAM-ДИСКУ С УЧЕТОМ ОКРУЖЕНИЯ PPTX2PNG:
+# Если передан $2 — берем его. Если нет — строим путь динамически с ENV_NAME.
 if [ -n "$2" ]; then
     SHM_DIR="$2"
-	EXTRA_ARGS="--shm-dir $2"
+    EXTRA_ARGS="--shm-dir $2"
 else
-    SHM_DIR=${SHM_DIR:-"/dev/shm/schedule_nbc/$ENV_NAME"}
+    SHM_DIR=${SHM_DIR:-"/dev/shm/pptx2png_tasks/$ENV_NAME"}
     EXTRA_ARGS="--shm-dir $SHM_DIR"
 fi
 echo "EXTRA_ARGS   = $EXTRA_ARGS"
 
-LOG_FILE="$SHM_DIR/bot_schedule_nbc.log"
+# В новом bot.py логи по умолчанию создаются в подпапке logs
+LOG_DIR="$SHM_DIR/logs"
+LOG_FILE="$LOG_DIR/bot.log"
+DEBUG_LOG_FILE="$LOG_DIR/debug.log"
+# Лог системного вывода (stdout/stderr самого процесса nohup)
+NOHUP_LOG="$LOG_DIR/sys_nohup.log"
+
 echo "LOG_FILE     = $LOG_FILE"
 
 case "$1" in
     start)
         echo "🚀 Запуск бота ($ENV_NAME)..."
-        mkdir -p "$SHM_DIR"
+        mkdir -p "$LOG_DIR"
         chmod 775 "$SHM_DIR" 2>/dev/null || true
+        chmod 775 "$LOG_DIR" 2>/dev/null || true
         
         if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
             echo "⚠️ Бот уже запущен!"
             exit 1
         fi
 
-	      nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" $EXTRA_ARGS > "$LOG_FILE" 2>&1 &        
+        # Запускаем скрипт, перенаправляя системный вывод в sys_nohup.log
+        nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" $EXTRA_ARGS > "$NOHUP_LOG" 2>&1 &        
         sleep 1.5
+        
         if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
             echo "✅ Бот успешно запущен в фоне."
-            echo "📄 Логи пишутся в: $LOG_FILE"
+            echo "📄 Основные логи пишутся в: $LOG_FILE"
+            echo "📄 Подробный дебаг пишется в: $DEBUG_LOG_FILE"
         else
-            echo "❌ Ошибка старта! Проверьте логи командой: ./manage.sh logs"
+            echo "❌ Ошибка старта! Проверьте системный лог: tail -n 20 $NOHUP_LOG"
         fi
         ;;
         
@@ -79,7 +87,8 @@ case "$1" in
             PID=$(pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" | head -n 1)
             echo "🟢 Бот РАБОТАЕТ (PID: $PID) [$ENV_NAME]"
             echo "📊 Активный RAM-диск: $SHM_DIR"
-			echo "✏️ Лог файл: $LOG_FILE"
+            echo "✏️ Основной лог: $LOG_FILE"
+            echo "✏️ Подробный лог: $DEBUG_LOG_FILE"
         else
             echo "🔴 Бот ОСТАНОВЛЕН [$ENV_NAME]"
         fi
@@ -87,24 +96,32 @@ case "$1" in
         
     logs)
         if [ -f "$LOG_FILE" ]; then
-            echo "📋 Вывод логов в реальном времени (нажмите Ctrl+C для выхода) [$ENV_NAME]:"
+            echo "📋 Вывод основного лога (INFO) в реальном времени (Ctrl+C для выхода) [$ENV_NAME]:"
             tail -n 10 -f "$LOG_FILE"
         else
             echo "❌ Файл логов еще не создан по пути: $LOG_FILE"
         fi
         ;;
-        
-    clear-logs)
-        if [ -f "$LOG_FILE" ]; then
-            true > "$LOG_FILE"
-            echo "🧹 Лог-файл успешно очищен."
+
+    debug-logs)
+        if [ -f "$DEBUG_LOG_FILE" ]; then
+            echo "📋 Вывод подробного лога (DEBUG) в реальном времени (Ctrl+C для выхода) [$ENV_NAME]:"
+            tail -n 15 -f "$DEBUG_LOG_FILE"
         else
-            echo "❌ Лог-файл не найден."
+            echo "❌ Файл дебаг-логов еще не создан."
         fi
         ;;
         
+    clear-logs)
+        # Очищаем все три файла логов, если они существуют
+        for f in "$LOG_FILE" "$DEBUG_LOG_FILE" "$NOHUP_LOG"; do
+            [ -f "$f" ] && true > "$f"
+        done
+        echo "🧹 Все лог-файлы в RAM-диске успешно очищены."
+        ;;
+        
     *)
-        echo "📋 Использование: $0 {start|stop|restart|status|logs|clear-logs}  [рабочий катало]"
+        echo "📋 Использование: $0 {start|stop|restart|status|logs|debug-logs|clear-logs} [кастомный_путь_shm]"
         exit 1
         ;;
 esac
