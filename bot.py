@@ -19,65 +19,90 @@ import aiohttp
 import converter_engine
 from user_manager import UserManager
 
-# 1. Определение директории запуска скрипта (в точности как в примере)
+# 1. Определение директории запуска скрипта и имени родительской папки (prod / test)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_NAME = os.path.basename(SCRIPT_DIR)  # Динамически получит имя папки, например 'pptx2png_prod' или 'pptx2png_test'
 
 # 2. Настраиваем парсер аргументов командной строки (в точности как в примере)
 parser = argparse.ArgumentParser(description="PPTX2PNG Telegram Bot")
-parser.add_argument("--log-dir", type=str, help="Путь к папке логов")
+parser.add_argument("--log-dir", type=str, help="Путь к папке логов (по дефолту внутри SHM)")
 parser.add_argument("--shm-dir", type=str, help="Путь к временной папке в RAM-диске")
 args, unknown = parser.parse_known_args()
 
-# 3. Инициализация конфигурации .ini относительно SCRIPT_DIR
+# 3. Инициализация конфигураций .ini относительно SCRIPT_DIR
 config_path = Path(SCRIPT_DIR) / "config.ini"
-config = configparser.ConfigParser()
-if not config_path.exists():
-    sys.exit(f"❌ Ошибка: Файл config.ini не найден по пути: {config_path}")
+settings_path = Path(SCRIPT_DIR) / "settings.ini"
 
+config = configparser.ConfigParser()
+settings_config = configparser.ConfigParser()
+
+# Проверка и чтение секретов
+if not config_path.exists():
+    sys.exit(f"❌ Ошибка: Файл секретов config.ini не найден по пути: {config_path}")
 config.read(config_path, encoding='utf-8')
+
 try:
     BOT_TOKEN = config.get("Telegram", "BOT_TOKEN").strip()
     ADMIN_ID = int(config.get("Telegram", "ADMIN_ID").strip())
 except Exception as e:
     sys.exit(f"❌ Ошибка в config.ini: {e}")
 
-# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ
-if args.log_dir:
-    LOG_DIR = args.log_dir
-else:
-    try:
-        LOG_DIR = config.get("Paths", "log_dir").strip()
-    except (configparser.NoSectionError, configparser.NoOptionError):
-        LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
+# Чтение общих настроек (если файла нет, бот продолжит работу на дефолтах)
+if settings_path.exists():
+    settings_config.read(settings_path, encoding='utf-8')
 
-# Гарантируем наличие рабочей папки логов при старте
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) - Полное соответствие NBC-скрипту
+# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) с учетом окружения ENV_NAME
 if args.shm_dir:
     SHM_DIR = Path(args.shm_dir)
 else:
     try:
-        SHM_DIR = Path(config.get("Paths", "shm_dir").strip())
+        BASE_SHM = settings_config.get("Paths", "shm_dir").strip()
+        SHM_DIR = Path(BASE_SHM) / ENV_NAME
     except (configparser.NoSectionError, configparser.NoOptionError):
-        SHM_DIR = Path("/dev/shm/pptx2png_tasks")
+        # Если в settings.ini пусто, создается подпапка окружения внутри дефолтной директории
+        SHM_DIR = Path("/dev/shm/pptx2png_tasks") / ENV_NAME
 
-# Гарантируем наличие рабочей папки в RAM при старте
-SHM_DIR.mkdir(exist_ok=True)
+# Гарантируем наличие изолированной рабочей папки в RAM при старте
+SHM_DIR.mkdir(parents=True, exist_ok=True)
+
+# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ (По умолчанию изолированно внутри созданной SHM-директории)
+if args.log_dir:
+    LOG_DIR = args.log_dir
+else:
+    try:
+        LOG_DIR = settings_config.get("Paths", "log_dir").strip()
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        # Автоматически создаем подпапку 'logs' внутри RAM-каталога текущего окружения
+        LOG_DIR = os.path.join(str(SHM_DIR), "logs")
+
+# Гарантируем наличие папки логов окружения в RAM при старте
+os.makedirs(LOG_DIR, exist_ok=True)
 
 # Инициализация менеджера пользователей
 user_mgr = UserManager(admin_id=ADMIN_ID)
 
-# 6. Настройка логирования с записью в файл внутри динамической папки логов
-log_file_path = os.path.join(LOG_DIR, "bot.log")
-logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(log_file_path, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# 6. ГИБКАЯ НАСТРОЙКА ЛОГИРОВАНИЯ (Обычный лог, Дебаг лог в SHM + вывод в Консоль)
+log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)  # Общий уровень перехвата (отлавливаем всё)
+
+# А. Основной файл логов окружения (Только INFO и выше) в RAM
+info_handler = logging.FileHandler(os.path.join(LOG_DIR, "bot.log"), encoding='utf-8')
+info_handler.setLevel(logging.INFO)
+info_handler.setFormatter(log_formatter)
+root_logger.addHandler(info_handler)
+
+# Б. Детальный дебаг файл окружения (DEBUG и выше) в RAM
+debug_handler = logging.FileHandler(os.path.join(LOG_DIR, "debug.log"), encoding='utf-8')
+debug_handler.setLevel(logging.DEBUG)
+debug_handler.setFormatter(log_formatter)
+root_logger.addHandler(debug_handler)
+
+# В. Вывод в консоль/терминал (Только INFO и выше) для Docker/Systemd
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.setFormatter(log_formatter)
+root_logger.addHandler(stdout_handler)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
