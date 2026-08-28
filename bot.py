@@ -78,8 +78,9 @@ else:
 # Гарантируем наличие папки логов окружения в RAM при старте
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Инициализация менеджера пользователей
-user_mgr = UserManager(admin_id=ADMIN_ID)
+# Инициализация менеджера пользователей с явной передачей базового пути окружения
+user_mgr = UserManager(admin_id=ADMIN_ID, base_dir=Path(SCRIPT_DIR))
+
 
 # 6. ГИБКАЯ НАСТРОЙКА ЛОГИРОВАНИЯ (Обычный лог, Дебаг лог в SHM + вывод в Консоль)
 log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
