@@ -21,7 +21,7 @@ from user_manager import UserManager
 
 # 1. Определение директории запуска скрипта и имени родительской папки (prod / test)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_NAME = os.path.basename(SCRIPT_DIR)  # Динамически получит имя папки, например 'pptx2png_prod' или 'pptx2png_test'
+ENV_NAME = os.path.basename(SCRIPT_DIR)  # Получает имя папки, например 'pptx2png_prod' или 'pptx2png_test'
 
 # 2. Настраиваем парсер аргументов командной строки (в точности как в примере)
 parser = argparse.ArgumentParser(description="PPTX2PNG Telegram Bot")
@@ -51,30 +51,30 @@ except Exception as e:
 if settings_path.exists():
     settings_config.read(settings_path, encoding='utf-8')
 
-# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) с проверкой на пустую строку
+# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) с проверкой на пустую строку (Решение бага Qodo)
 if args.shm_dir:
     SHM_DIR = Path(args.shm_dir)
 else:
     try:
         BASE_SHM = settings_config.get("Paths", "shm_dir").strip()
-        # Если параметр существует, но оставлен пустым в .ini файле
+        # Если параметр объявлен в settings.ini, но оставлен пустым
         if not BASE_SHM:
             raise configparser.NoOptionError("shm_dir", "Paths")
         SHM_DIR = Path(BASE_SHM) / ENV_NAME
     except (configparser.NoSectionError, configparser.NoOptionError):
-        # Гарантированный абсолютный путь по умолчанию, если в конфиге пусто или его нет
+        # Гарантированный абсолютный путь по умолчанию в RAM
         SHM_DIR = Path("/dev/shm/pptx2png_tasks") / ENV_NAME
 
 # Гарантируем наличие изолированной рабочей папки в RAM при старте
 SHM_DIR.mkdir(parents=True, exist_ok=True)
 
-# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ с аналогичной защитой от пустых строк
+# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ с защитой от пустых строк (Решение бага Qodo)
 if args.log_dir:
     LOG_DIR = args.log_dir
 else:
     try:
         BASE_LOG = settings_config.get("Paths", "log_dir").strip()
-        # Если параметр существует, но оставлен пустым в .ini файле
+        # Если параметр объявлен в settings.ini, но оставлен пустым
         if not BASE_LOG:
             raise configparser.NoOptionError("log_dir", "Paths")
         LOG_DIR = BASE_LOG
@@ -85,10 +85,8 @@ else:
 # Гарантируем наличие папки логов окружения в RAM при старте
 os.makedirs(LOG_DIR, exist_ok=True)
 
-
-# Инициализация менеджера пользователей с явной передачей базового пути окружения
+# Инициализация менеджера пользователей с явной передачей базового пути (Решение бага Qodo с Whitelist)
 user_mgr = UserManager(admin_id=ADMIN_ID, base_dir=Path(SCRIPT_DIR))
-
 
 # 6. ГИБКАЯ НАСТРОЙКА ЛОГИРОВАНИЯ (Обычный лог, Дебаг лог в SHM + вывод в Консоль)
 log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -115,6 +113,7 @@ root_logger.addHandler(stdout_handler)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
 
 def get_settings_keyboard(user_id):
     cfg = user_mgr.get_user_config(user_id)
