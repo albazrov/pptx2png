@@ -1,5 +1,7 @@
 warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
-Traceback (most recent call last):
-  File "/home/pi/app/pptx2png/test/bot.py", line 82, in <module>
-    user_mgr = UserManager(admin_id=ADMIN_ID)
-TypeError: UserManager.__init__() missing 1 required positional argument: 'base_dir'
+2026-08-28 23:40:34,939 - INFO - Модульный бот запущен на /dev/shm...
+2026-08-28 23:40:34,940 - INFO - Start polling
+2026-08-28 23:40:35,374 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-28 23:40:51,563 - WARNING - Received SIGTERM signal
+2026-08-28 23:40:51,565 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-28 23:40:51,565 - INFO - Polling stopped
