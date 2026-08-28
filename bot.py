@@ -22,9 +22,10 @@ from user_manager import UserManager
 # 1. Определение директории запуска скрипта (в точности как в примере)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 2. Парсер аргументов командной строки (в точности как в примере)
+# 2. Настраиваем парсер аргументов командной строки (в точности как в примере)
 parser = argparse.ArgumentParser(description="PPTX2PNG Telegram Bot")
 parser.add_argument("--log-dir", type=str, help="Путь к папке логов")
+parser.add_argument("--shm-dir", type=str, help="Путь к временной папке в RAM-диске")
 args, unknown = parser.parse_known_args()
 
 # 3. Инициализация конфигурации .ini относительно SCRIPT_DIR
@@ -40,8 +41,7 @@ try:
 except Exception as e:
     sys.exit(f"❌ Ошибка в config.ini: {e}")
 
-# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ (Полное соответствие эталонной логике)
-# 1. Ключ запуска --log-dir -> 2. Параметр в config.ini -> 3. Дефолт
+# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ
 if args.log_dir:
     LOG_DIR = args.log_dir
 else:
@@ -53,14 +53,22 @@ else:
 # Гарантируем наличие рабочей папки логов при старте
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# 5. Конфигурация путей в оперативной памяти (SHM)
-SHM_DIR = Path("/dev/shm/pptx2png_tasks")
+# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) - Полное соответствие NBC-скрипту
+if args.shm_dir:
+    SHM_DIR = Path(args.shm_dir)
+else:
+    try:
+        SHM_DIR = Path(config.get("Paths", "shm_dir").strip())
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        SHM_DIR = Path("/dev/shm/pptx2png_tasks")
+
+# Гарантируем наличие рабочей папки в RAM при старте
 SHM_DIR.mkdir(exist_ok=True)
 
 # Инициализация менеджера пользователей
 user_mgr = UserManager(admin_id=ADMIN_ID)
 
-# 6. Настройка логирования с записью в файл внутри новой папки логов
+# 6. Настройка логирования с записью в файл внутри динамической папки логов
 log_file_path = os.path.join(LOG_DIR, "bot.log")
 logging.basicConfig(
     level=logging.INFO, 
@@ -73,7 +81,6 @@ logging.basicConfig(
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
 
 def get_settings_keyboard(user_id):
     cfg = user_mgr.get_user_config(user_id)
