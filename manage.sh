@@ -33,12 +33,16 @@ LOG_FILE="$LOG_DIR/bot.log"
 DEBUG_LOG_FILE="$LOG_DIR/debug.log"
 NOHUP_LOG="$LOG_DIR/sys_nohup.log"
 
-# Формируем аргументы запуска: явно передаем И подпапку памяти, И подпапку логов
-EXTRA_ARGS="--shm-dir $SHM_DIR --log-dir $LOG_DIR"
+# ИСПОЛЬЗУЕМ BASH-МАССИВ: экранирует любые пробелы и спецсимволы в путях
+EXTRA_ARGS=(
+    "--shm-dir" "$SHM_DIR"
+    "--log-dir" "$LOG_DIR"
+)
 
 echo "SHM_DIR      = $SHM_DIR"
 echo "LOG_DIR      = $LOG_DIR"
-echo "EXTRA_ARGS   = $EXTRA_ARGS"
+echo "EXTRA_ARGS   = ${EXTRA_ARGS[*]}"
+
 
 case "$1" in
     start)
@@ -52,8 +56,8 @@ case "$1" in
             exit 1
         fi
 
-        # Запускаем скрипт, перенаправляя системный вывод в sys_nohup.log
-        nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" $EXTRA_ARGS > "$NOHUP_LOG" 2>&1 &        
+        # Запускаем скрипт, корректно раскрывая массив аргументов с сохранением пробелов
+        nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" "${EXTRA_ARGS[@]}" > "$NOHUP_LOG" 2>&1 & 
         sleep 1.5
         
         if pgrep -f "python3.*$PROJECT_DIR/$BOT_SCRIPT" > /dev/null; then
