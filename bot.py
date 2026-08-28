@@ -51,32 +51,40 @@ except Exception as e:
 if settings_path.exists():
     settings_config.read(settings_path, encoding='utf-8')
 
-# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) с учетом окружения ENV_NAME
+# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ RAM-ДИСКА (SHM) с проверкой на пустую строку
 if args.shm_dir:
     SHM_DIR = Path(args.shm_dir)
 else:
     try:
         BASE_SHM = settings_config.get("Paths", "shm_dir").strip()
+        # Если параметр существует, но оставлен пустым в .ini файле
+        if not BASE_SHM:
+            raise configparser.NoOptionError("shm_dir", "Paths")
         SHM_DIR = Path(BASE_SHM) / ENV_NAME
     except (configparser.NoSectionError, configparser.NoOptionError):
-        # Если в settings.ini пусто, создается подпапка окружения внутри дефолтной директории
+        # Гарантированный абсолютный путь по умолчанию, если в конфиге пусто или его нет
         SHM_DIR = Path("/dev/shm/pptx2png_tasks") / ENV_NAME
 
 # Гарантируем наличие изолированной рабочей папки в RAM при старте
 SHM_DIR.mkdir(parents=True, exist_ok=True)
 
-# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ (По умолчанию изолированно внутри созданной SHM-директории)
+# 5. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ с аналогичной защитой от пустых строк
 if args.log_dir:
     LOG_DIR = args.log_dir
 else:
     try:
-        LOG_DIR = settings_config.get("Paths", "log_dir").strip()
+        BASE_LOG = settings_config.get("Paths", "log_dir").strip()
+        # Если параметр существует, но оставлен пустым в .ini файле
+        if not BASE_LOG:
+            raise configparser.NoOptionError("log_dir", "Paths")
+        LOG_DIR = BASE_LOG
     except (configparser.NoSectionError, configparser.NoOptionError):
         # Автоматически создаем подпапку 'logs' внутри RAM-каталога текущего окружения
         LOG_DIR = os.path.join(str(SHM_DIR), "logs")
 
 # Гарантируем наличие папки логов окружения в RAM при старте
 os.makedirs(LOG_DIR, exist_ok=True)
+
 
 # Инициализация менеджера пользователей с явной передачей базового пути окружения
 user_mgr = UserManager(admin_id=ADMIN_ID, base_dir=Path(SCRIPT_DIR))
