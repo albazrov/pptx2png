@@ -1,31 +1,37 @@
 import sys
+import os
 import logging
 import asyncio
 import shutil
 import configparser
-from pathlib import Path
+import argparse  # Соответствует примеру
+from pathlib import Path 
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import aiohttp
+import aiohttp 
 
-# Test CI/CD 3
+# Test CI/CD 3 
 
 # ИМПОРТ НАШИХ КАСТОМНЫХ МОДУЛЕЙ
 import converter_engine
 from user_manager import UserManager
 
-# Конфигурация путей в оперативной памяти
-SHM_DIR = Path("/dev/shm/pptx2png_tasks")
-SHM_DIR.mkdir(exist_ok=True)
+# 1. Определение директории запуска скрипта (в точности как в примере)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Инициализация конфигурации .ini
-config_path = Path.cwd() / "config.ini"
+# 2. Парсер аргументов командной строки (в точности как в примере)
+parser = argparse.ArgumentParser(description="PPTX2PNG Telegram Bot")
+parser.add_argument("--log-dir", type=str, help="Путь к папке логов")
+args, unknown = parser.parse_known_args()
+
+# 3. Инициализация конфигурации .ini относительно SCRIPT_DIR
+config_path = Path(SCRIPT_DIR) / "config.ini"
 config = configparser.ConfigParser()
 if not config_path.exists():
-    sys.exit("❌ Ошибка: Файл config.ini не найден!")
+    sys.exit(f"❌ Ошибка: Файл config.ini не найден по пути: {config_path}")
 
 config.read(config_path, encoding='utf-8')
 try:
@@ -34,12 +40,40 @@ try:
 except Exception as e:
     sys.exit(f"❌ Ошибка в config.ini: {e}")
 
+# 4. ПРИОРИТЕТ ПУТЕЙ ДЛЯ ЛОГОВ (Полное соответствие эталонной логике)
+# 1. Ключ запуска --log-dir -> 2. Параметр в config.ini -> 3. Дефолт
+if args.log_dir:
+    LOG_DIR = args.log_dir
+else:
+    try:
+        LOG_DIR = config.get("Paths", "log_dir").strip()
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
+
+# Гарантируем наличие рабочей папки логов при старте
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# 5. Конфигурация путей в оперативной памяти (SHM)
+SHM_DIR = Path("/dev/shm/pptx2png_tasks")
+SHM_DIR.mkdir(exist_ok=True)
+
 # Инициализация менеджера пользователей
 user_mgr = UserManager(admin_id=ADMIN_ID)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# 6. Настройка логирования с записью в файл внутри новой папки логов
+log_file_path = os.path.join(LOG_DIR, "bot.log")
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_file_path, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
 
 def get_settings_keyboard(user_id):
     cfg = user_mgr.get_user_config(user_id)
