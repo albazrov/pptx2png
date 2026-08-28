@@ -1,7 +1,7 @@
 warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
-2026-08-28 23:15:46,291 - INFO - Модульный бот запущен на /dev/shm...
-2026-08-28 23:15:46,292 - INFO - Start polling
-2026-08-28 23:15:46,720 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-28 23:16:02,912 - WARNING - Received SIGTERM signal
-2026-08-28 23:16:02,913 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-28 23:16:02,914 - INFO - Polling stopped
+2026-08-28 23:20:03,355 - INFO - Модульный бот запущен на /dev/shm...
+2026-08-28 23:20:03,356 - INFO - Start polling
+2026-08-28 23:20:03,795 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-28 23:20:20,040 - WARNING - Received SIGTERM signal
+2026-08-28 23:20:20,042 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-28 23:20:20,043 - INFO - Polling stopped
