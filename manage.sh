@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# 20260828
+
 # Пути к файлам и папкам
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 BOT_SCRIPT="bot.py"
