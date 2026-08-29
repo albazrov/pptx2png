@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # Импортируем ВСЕ утилиты и конвейер обработки из utils.py
 from utils import extract_text_from_pptx, check_spelling, download_file_by_url, core_pipeline
 
+# 20260830
 # ==========================================
 # ГЛОБАЛЬНЫЙ МЕНЕДЖЕР БЛОКИРОВОК ЗАДАЧ (С ОЧИСТКОЙ)
 # ==========================================
