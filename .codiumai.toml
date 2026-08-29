@@ -1,0 +1,7 @@
+[pr_agent]
+# Основная инструкция для изменения языка ответов
+custom_labels = []
+
+[pr_agent.prompt_modifications]
+# Дополнительное переопределение для всех генерируемых текстов в PR
+extra_instructions = "Все ответы, комментарии, обзоры кода и описания (Pull Request descriptions, code reviews, suggestions) должны быть строго на русском языке."

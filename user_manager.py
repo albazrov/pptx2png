@@ -1,9 +1,10 @@
 from pathlib import Path
 
 class UserManager:
-    def __init__(self, admin_id: int):
+    def __init__(self, admin_id: int, base_dir: Path):
         self.admin_id = admin_id
-        self.white_list_file = Path.cwd() / "allowed_users.txt"
+        # Теперь файл whitelist жестко привязан к каталогу скрипта (prod или test)
+        self.white_list_file = base_dir / "allowed_users.txt"
         self.user_settings = {}  # Кэш настроек в RAM: {user_id: {"quality": "2k", "keep_pdf": False}}
 
     def load_allowed_users(self) -> set:
@@ -29,4 +30,3 @@ class UserManager:
         if user_id not in self.user_settings:
             self.user_settings[user_id] = {"quality": "2k", "keep_pdf": False}
         return self.user_settings[user_id]
-

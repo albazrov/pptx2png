@@ -27,7 +27,7 @@ jobs:
           cd /home/pi/app/pptx2png/test/
           
           # Запуск тестового бота ровно на 15 секунд
-          timeout 15s /home/pi/.venv/bin/python3 bot.py > debug.log 2>&1 || true
+          timeout 30s /home/pi/.venv/bin/python3 bot.py > debug.log 2>&1 || true
           
           cp debug.log ${{ github.workspace }}/debug.log
 
