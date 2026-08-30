@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from utils import extract_text_from_pptx, check_spelling, download_file_by_url, core_pipeline
 import converter_engine
+from converter_engine import make_dark_mode
 
 # ==========================================
 # ГЛОБАЛЬНЫЙ МЕНЕДЖЕР БЛОКИРОВОК ЗАДАЧ (ВОССТАНОВЛЕН)
@@ -247,21 +248,28 @@ async def _validate_task_ownership(callback: types.CallbackQuery, task_id: str, 
 # 5. КОНВЕРТАЦИЯ В PNG (В ПОТОКЕ)
 # ==========================================
 async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> List[Path]:
-    """Синхронная работа вынесена в поток."""
+    """
+    Конвертирует все слайды в PNG с применением тёмной темы.
+    """
     def _sync_convert():
-        args = converter_engine.FakeArgs(
-            quality=quality,
-            keep_pdf=False,
-            dark_mode=True,
-            zip_mode=False,
-            clean=False,
-            output_dir=str(output_dir)
-        )
-        pdf_path = converter_engine.pptx_to_pdf_crossplatform(pptx_path, output_dir)
+        # 1. Создаём временную копию с тёмной темой
+        temp_dark_pptx = output_dir / f"temp_dark_{pptx_path.name}"
+        make_dark_mode(pptx_path, temp_dark_pptx)
+        
+        # 2. Конвертируем тёмную копию в PDF
+        pdf_path = converter_engine.pptx_to_pdf_crossplatform(temp_dark_pptx, output_dir)
+        
+        # 3. Конвертируем PDF в PNG
         total_slides, png_paths = converter_engine.pdf_to_png_fast(pdf_path, output_dir, quality)
+        
+        # 4. Удаляем временные файлы
         if pdf_path.exists():
             pdf_path.unlink()
+        if temp_dark_pptx.exists():
+            temp_dark_pptx.unlink()
+        
         return png_paths
+    
     return await asyncio.to_thread(_sync_convert)
 
 
@@ -282,7 +290,6 @@ async def run_conversion(
     if not session:
         await callback.message.edit_text("❌ Сессия истекла. Отправьте файл заново.")
         return
-    # Проверяем, что текущий пользователь – владелец
     if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
         await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
         return
@@ -307,6 +314,14 @@ async def run_conversion(
             # Используем существующий pipeline
             expected_zip, final_pdf_path = await core_pipeline(pptx_path, callback.message, user_id, user_mgr)
             if expected_zip and expected_zip.exists():
+                # Проверяем размер архива
+                if expected_zip.stat().st_size > 45 * 1024 * 1024:
+                    await callback.message.edit_text(
+                        "⚠️ **Архив слишком большой (>45 МБ).**\n"
+                        "Telegram не позволяет отправлять файлы >50 МБ.\n"
+                        "Попробуйте уменьшить качество или выбрать меньше слайдов."
+                    )
+                    return
                 await callback.message.edit_text("📤 Отправляю готовые файлы...")
                 await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(expected_zip),
                                                 caption="📦 ZIP со всеми слайдами готов!")
@@ -344,6 +359,16 @@ async def run_conversion(
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for fpath in selected:
                         zf.write(fpath, arcname=fpath.name)
+                # Проверяем размер каждого архива
+                if zip_path.stat().st_size > 45 * 1024 * 1024:
+                    # Если архив слишком большой, удаляем его и сообщаем
+                    zip_path.unlink()
+                    await callback.message.edit_text(
+                        f"⚠️ **Архив для диапазона {start}-{end} слишком большой (>45 МБ).**\n"
+                        "Telegram не позволяет отправлять файлы >50 МБ.\n"
+                        "Попробуйте уменьшить диапазон или качество."
+                    )
+                    return
                 archives.append(zip_path)
             if archives:
                 await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
@@ -370,7 +395,6 @@ async def run_conversion(
         sessions.pop(task_id, None)
         task_lock_manager.release(task_id, "conversion")
 
-
 # ==========================================
 # 7. ХЕНДЛЕРЫ ВЫБОРА СЛАЙДОВ
 # ==========================================
@@ -381,13 +405,33 @@ async def handle_all_slides(callback: types.CallbackQuery, bot: Bot, SHM_DIR: st
         await callback.answer("❌ Доступ запрещен.", show_alert=True)
         return
     task_id = callback.data.split(":")[-1]
-    # Проверяем существование сессии
     if task_id not in sessions:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    # Сразу отвечаем на callback, чтобы избежать таймаута
+    await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text("⚙️ Запускаю конвертацию всех слайдов...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True)
-    await callback.answer()
+    # callback.answer() уже вызван
+
+@router.callback_query(F.data.startswith("slides_convert:"))
+async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_DIR: str, user_mgr,
+                                  check_access_by_user, get_settings_keyboard):
+    if not await check_access_by_user(callback.from_user, bot):
+        await callback.answer("❌ Доступ запрещен.", show_alert=True)
+        return
+    task_id = callback.data.split(":")[-1]
+    session = sessions.get(task_id)
+    if not session:
+        await callback.answer("❌ Сессия истекла.", show_alert=True)
+        return
+    ranges = session.get("ranges")
+    if not ranges:
+        await callback.answer("❌ Не выбраны слайды.", show_alert=True)
+        return
+    await callback.answer("⏳ Начинаю конвертацию...")
+    await callback.message.edit_text(f"⚙️ Запускаю конвертацию {len(ranges)} диапазон(ов)...")
+    await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=False, ranges=ranges)
 
 @router.callback_query(F.data.startswith("slides_select:"))
 async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
