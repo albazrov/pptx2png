@@ -250,11 +250,18 @@ async def _validate_task_ownership(callback: types.CallbackQuery, task_id: str, 
 async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> List[Path]:
     """
     Конвертирует все слайды в PNG с применением тёмной темы.
+    Поддерживает как .pptx, так и .ppt (конвертирует старый формат через LibreOffice).
     """
     def _sync_convert():
+        # Если файл .ppt, конвертируем в .pptx сначала
+        if pptx_path.suffix.lower() == '.ppt':
+            pptx_converted = converter_engine.ppt_to_pptx_crossplatform(pptx_path, output_dir)
+        else:
+            pptx_converted = pptx_path
+
         # 1. Создаём временную копию с тёмной темой
-        temp_dark_pptx = output_dir / f"temp_dark_{pptx_path.name}"
-        make_dark_mode(pptx_path, temp_dark_pptx)
+        temp_dark_pptx = output_dir / f"temp_dark_{pptx_converted.name}"
+        make_dark_mode(pptx_converted, temp_dark_pptx)
         
         # 2. Конвертируем тёмную копию в PDF
         pdf_path = converter_engine.pptx_to_pdf_crossplatform(temp_dark_pptx, output_dir)
@@ -267,6 +274,9 @@ async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> L
             pdf_path.unlink()
         if temp_dark_pptx.exists():
             temp_dark_pptx.unlink()
+        # Если был создан временный PPTX (из PPT), удаляем его
+        if pptx_converted != pptx_path and pptx_converted.exists():
+            pptx_converted.unlink()
         
         return png_paths
     
@@ -450,25 +460,6 @@ async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
         "Если укажете несколько диапазонов, каждый будет упакован в отдельный архив.",
         parse_mode="Markdown"
     )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("slides_convert:"))
-async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_DIR: str, user_mgr,
-                                  check_access_by_user, get_settings_keyboard):
-    if not await check_access_by_user(callback.from_user, bot):
-        await callback.answer("❌ Доступ запрещен.", show_alert=True)
-        return
-    task_id = callback.data.split(":")[-1]
-    session = sessions.get(task_id)
-    if not session:
-        await callback.answer("❌ Сессия истекла.", show_alert=True)
-        return
-    ranges = session.get("ranges")
-    if not ranges:
-        await callback.answer("❌ Не выбраны слайды.", show_alert=True)
-        return
-    await callback.message.edit_text(f"⚙️ Запускаю конвертацию {len(ranges)} диапазон(ов)...")
-    await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=False, ranges=ranges)
     await callback.answer()
 
 
