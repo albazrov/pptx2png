@@ -51,10 +51,16 @@ jobs:
           git config --global user.name "Raspberry Runner"
           git config --global user.email "runner@raspberry.local"
           
-          # Добавляем и коммитим лог, если он существует
+          # Проверяем, есть ли лог-файл
           if [ -f debug.log ]; then
+            # Добавляем файл в индекс
             git add debug.log
-            git commit -m "Chore: update debug.log [skip ci]" || echo "No changes"
+            # Коммитим (если нет изменений — пропускаем)
+            git commit -m "Chore: update debug.log [skip ci]" || echo "No changes to commit"
+            # Подтягиваем последние изменения из удалённой ветки test,
+            # чтобы избежать конфликтов при пуше
+            git pull --rebase origin test || echo "Pull failed, continuing with push"
+            # Пушим в удалённую ветку test
             git push origin test
           fi
 
