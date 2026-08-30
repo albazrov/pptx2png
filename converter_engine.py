@@ -179,3 +179,25 @@ def process_file_local(pptx_path, args):
         if temp_dark_pptx and temp_dark_pptx.exists():
             temp_dark_pptx.unlink()
         raise e
+
+def ppt_to_pptx_crossplatform(ppt_path: Path, output_dir: Path) -> Path:
+    """
+    Конвертирует старый бинарный PPT в PPTX с помощью LibreOffice.
+    Возвращает путь к созданному PPTX-файлу.
+    """
+    mac_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    if os.path.exists(mac_path):
+        libreoffice_path = mac_path
+    elif shutil.which("soffice") is not None:
+        libreoffice_path = "soffice"
+    else:
+        raise FileNotFoundError("LibreOffice не найден в системе!")
+
+    cmd = [
+        libreoffice_path, "--headless",
+        "--convert-to", "pptx",
+        "--outdir", str(output_dir),
+        str(ppt_path)
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    return output_dir / f"{ppt_path.stem}.pptx"
