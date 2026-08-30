@@ -19,10 +19,62 @@ import converter_engine
 # ==========================================
 
 class TaskLockManager:
-    # ... (код без изменений, см. предыдущие версии) ...
-    pass
+    def __init__(self):
+        self._locks: Dict[str, asyncio.Lock] = {}
+        self._states: Dict[str, str] = {}
+        self._active_operations: Dict[str, Set[str]] = {}
+        self._last_activity: Dict[str, float] = {}
+        self._dict_lock = asyncio.Lock()
 
-# Создаём глобальный экземпляр менеджера блокировок
+    async def acquire(self, task_id: str, operation: str) -> bool:
+        async with self._dict_lock:
+            if task_id not in self._locks:
+                self._locks[task_id] = asyncio.Lock()
+            current_state = self._states.get(task_id, "idle")
+            if current_state in ("processing", "completed"):
+                return False
+            lock = self._locks[task_id]
+            acquired = lock.locked() or await asyncio.shield(lock.acquire())
+            if acquired:
+                self._states[task_id] = "processing"
+                if task_id not in self._active_operations:
+                    self._active_operations[task_id] = set()
+                self._active_operations[task_id].add(operation)
+                self._last_activity[task_id] = asyncio.get_event_loop().time()
+                return True
+            return False
+
+    def release(self, task_id: str, operation: str):
+        async def _release_internal():
+            async with self._dict_lock:
+                if task_id not in self._locks:
+                    return
+                if task_id in self._active_operations:
+                    self._active_operations[task_id].discard(operation)
+                    if not self._active_operations[task_id]:
+                        self._locks.pop(task_id, None)
+                        self._states.pop(task_id, None)
+                        self._active_operations.pop(task_id, None)
+                        self._last_activity.pop(task_id, None)
+                        return
+                self._last_activity[task_id] = asyncio.get_event_loop().time()
+                if task_id in self._locks:
+                    lock = self._locks[task_id]
+                    if lock.locked():
+                        lock.release()
+        asyncio.create_task(_release_internal())
+
+    async def cleanup_expired(self, max_age: float = 3600):
+        async with self._dict_lock:
+            current_time = asyncio.get_event_loop().time()
+            expired = [tid for tid, t in self._last_activity.items() if current_time - t > max_age]
+            for tid in expired:
+                self._locks.pop(tid, None)
+                self._states.pop(tid, None)
+                self._active_operations.pop(tid, None)
+                self._last_activity.pop(tid, None)
+
+
 task_lock_manager = TaskLockManager()
 
 # ==========================================
@@ -113,28 +165,6 @@ async def handle_admin_decision(callback: types.CallbackQuery, user_mgr, bot: Bo
             pass
     await callback.answer()
 
-def parse_slides_ranges(input_text: str) -> List[Tuple[int, int]]:
-    """Парсит строку с номерами слайдов. Возвращает список кортежей (start, end)."""
-    ranges = []
-    parts = input_text.replace(" ", "").split(",")
-    for part in parts:
-        if not part:
-            continue
-        if "-" in part:
-            try:
-                start, end = map(int, part.split("-"))
-                if start > end:
-                    start, end = end, start
-                ranges.append((start, end))
-            except ValueError:
-                return []
-        else:
-            try:
-                num = int(part)
-                ranges.append((num, num))
-            except ValueError:
-                return []
-    return ranges
 
 # ==========================================
 # 2. КОМАНДА СТАРТ
@@ -158,14 +188,11 @@ async def handle_quality_settings(callback: types.CallbackQuery, user_mgr, get_s
     new_quality = callback.data.replace("set_q_", "")
     user_mgr.update_user_config(user_id, "quality", new_quality)
     try:
-        pdf_path = converter_engine.pptx_to_pdf_crossplatform(pptx_path, output_dir)
-        total_slides, png_paths = converter_engine.pdf_to_png_fast(pdf_path, output_dir, quality)
-        if pdf_path.exists():
-            pdf_path.unlink()
-        return png_paths
+        await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(user_id))
+        await callback.answer(f"Quality updated to: {new_quality.upper()}")
     except Exception as e:
-        logging.error(f"Ошибка конвертации PNG: {e}", exc_info=True)
-        return []
+        logging.error(f"Error updating quality keyboard: {e}")
+        await callback.answer()
 
 @router.callback_query(F.data == "toggle_pdf")
 async def handle_toggle_pdf(callback: types.CallbackQuery, user_mgr, get_settings_keyboard, check_access_by_user, bot: Bot):
@@ -177,82 +204,13 @@ async def handle_toggle_pdf(callback: types.CallbackQuery, user_mgr, get_setting
     new_pdf_status = not current_config.get("keep_pdf", False)
     user_mgr.update_user_config(user_id, "keep_pdf", new_pdf_status)
     try:
-        cfg = user_mgr.get_user_config(user_id)
-        if all_slides:
-            # Конвертация всех слайдов через существующий pipeline
-            expected_zip, final_pdf_path = await core_pipeline(pptx_path, callback.message, user_id, user_mgr)
-            if expected_zip and expected_zip.exists():
-                await callback.message.edit_text("📤 Отправляю готовые файлы...")
-                await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(expected_zip),
-                                                caption="📦 ZIP со всеми слайдами готов!")
-                if final_pdf_path and final_pdf_path.exists():
-                    await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(final_pdf_path),
-                                                    caption="📄 PDF готов!")
-                await callback.message.delete()
-            else:
-                await callback.message.edit_text("❌ Ошибка конвертации всех слайдов.")
-        elif ranges:
-            # Конвертация выбранных слайдов – сначала получаем все PNG
-            temp_png_dir = task_dir / "temp_pngs"
-            temp_png_dir.mkdir(exist_ok=True)
-            all_pngs = await convert_all_pngs(pptx_path, temp_png_dir, cfg["quality"])
-            if not all_pngs:
-                await callback.message.edit_text("❌ Не удалось конвертировать слайды в PNG.")
-                return
-            total_slides = len(all_pngs)
-            archives = []
-            for idx, (start, end) in enumerate(ranges, 1):
-                if start > total_slides:
-                    await callback.message.edit_text(f"❌ Слайд {start} не существует (всего {total_slides}).")
-                    return
-                if end > total_slides:
-                    end = total_slides
-                selected_files = []
-                for i in range(start - 1, end):
-                    if i < len(all_pngs):
-                        selected_files.append(all_pngs[i])
-                if not selected_files:
-                    continue
-                range_name = f"slides_{start}-{end}" if start != end else f"slide_{start}"
-                zip_path = task_dir / f"{pptx_path.stem}_{range_name}.zip"
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for file_path in selected_files:
-                        zipf.write(file_path, arcname=file_path.name)
-                archives.append(zip_path)
-            if archives:
-                await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
-                for zip_path in archives:
-                    if zip_path.exists():
-                        await callback.bot.send_document(
-                            chat_id=chat_id,
-                            document=FSInputFile(zip_path),
-                            caption=f"📦 {zip_path.name}"
-                        )
-                await callback.message.delete()
-                await callback.bot.send_message(
-                    chat_id=chat_id,
-                    text="⚙️ **Настройки для следующей презентации:**",
-                    reply_markup=get_settings_keyboard(user_id)
-                )
-            else:
-                await callback.message.edit_text("❌ Ошибка создания архивов для выбранных слайдов.")
+        await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(user_id))
+        status_text = "Да (ZIP + PDF)" if new_pdf_status else "Нет (Только ZIP)"
+        await callback.answer(f"PDF output: {status_text}")
     except Exception as e:
-        logging.error(f"Ошибка в run_conversion: {e}", exc_info=True)
-        await callback.message.edit_text(f"❌ Ошибка конвертации: {e}")
-    finally:
-        # Очистка временных файлов
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
-        if user_id in user_sessions:
-            del user_sessions[user_id]
+        logging.error(f"Error toggling PDF keyboard: {e}")
+        await callback.answer()
 
-# ==========================================
-# 5. АДМИНСКИЕ ХЕНДЛЕРЫ (без изменений)
-# ==========================================
-@router.callback_query(F.data.startswith("adm_"))
-async def handle_admin_decision(...):
-    # ... (остаётся без изменений)
-    pass
 
 # ==========================================
 # 4. ПРОВЕРКА ВЛАДЕЛЬЦА ЗАДАЧИ
@@ -306,25 +264,6 @@ async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> L
         return png_paths
     return await asyncio.to_thread(_sync_convert)
 
-@router.callback_query(F.data.startswith("slides_select:"))
-async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
-    """Пользователь выбрал выборочную конвертацию."""
-    task_id = callback.data.split(":")[-1]
-    user_id = callback.from_user.id
-    session = user_sessions.get(user_id)
-    if session:
-        session["awaiting_selection"] = True
-        session["task_id"] = task_id
-    await callback.message.edit_text(
-        "📝 **Введите номера слайдов для конвертации.**\n\n"
-        "Формат ввода:\n"
-        "• Отдельные номера: `1, 3, 5, 7`\n"
-        "• Диапазоны: `4-12, 15, 20-30`\n"
-        "• Смешанный: `1, 3-5, 10, 15-20`\n\n"
-        "Если укажете несколько диапазонов, каждый будет упакован в отдельный архив.",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
 
 # ==========================================
 # 6. ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ (С БЛОКИРОВКОЙ И ОЧИСТКОЙ)
@@ -488,25 +427,6 @@ async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_D
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=False, ranges=ranges)
     await callback.answer()
 
-# ==========================================
-# 11. ОБРАБОТЧИКИ СПЕЛЛЕРА И КОНВЕРТАЦИИ (с изменениями)
-# ==========================================
-
-@router.callback_query(F.data.startswith("chk_spell:"))
-async def callback_run_speller(...):
-    # ... (код без изменений, но теперь он не удаляет task_dir)
-    # ВАЖНО: в finally не удаляем task_dir, т.к. он нужен для конвертации.
-    # Очистка произойдёт после конвертации или по таймауту.
-    pass
-
-@router.callback_query(F.data.startswith("chk_conv:"))
-async def callback_run_conversion(...):
-    # ... (код без изменений, но он должен использовать run_conversion?)
-    # Можно оставить как есть, если хотим сохранить старый путь.
-    # Но для единообразия лучше переделать на новую логику выбора слайдов.
-    # Однако для обратной совместимости можно оставить старый обработчик,
-    # который конвертирует все слайды.
-    pass
 
 # ==========================================
 # 8. ОБРАБОТЧИКИ СПЕЛЛЕРА И СТАРОЙ КОНВЕРТАЦИИ (ОСТАВЛЯЕМ ДЛЯ СОВМЕСТИМОСТИ)
@@ -706,9 +626,6 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             shutil.rmtree(task_dir)
         sessions.pop(task_id, None)
 
-# ==========================================
-# 13. ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (для ввода слайдов)
-# ==========================================
 
 # ==========================================
 # 12. ОБРАБОТЧИК ТЕКСТА (ВВОД СЛАЙДОВ)
