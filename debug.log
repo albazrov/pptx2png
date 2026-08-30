@@ -1,23 +1,23 @@
 warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
 INFO:root:Окружение: test
-2026-08-30 23:08:54,513 - INFO - Окружение: test
+2026-08-30 23:14:01,739 - INFO - Окружение: test
 INFO:root:RAM-диск: /dev/shm/pptx2png_tasks/test
-2026-08-30 23:08:54,513 - INFO - RAM-диск: /dev/shm/pptx2png_tasks/test
+2026-08-30 23:14:01,739 - INFO - RAM-диск: /dev/shm/pptx2png_tasks/test
 INFO:root:Логи: /dev/shm/pptx2png_tasks/test/logs
-2026-08-30 23:08:54,513 - INFO - Логи: /dev/shm/pptx2png_tasks/test/logs
+2026-08-30 23:14:01,740 - INFO - Логи: /dev/shm/pptx2png_tasks/test/logs
 INFO:root:✅ Бот успешно инициализирован и готов к работе
-2026-08-30 23:08:54,541 - INFO - ✅ Бот успешно инициализирован и готов к работе
+2026-08-30 23:14:01,767 - INFO - ✅ Бот успешно инициализирован и готов к работе
 INFO:aiogram.dispatcher:Start polling
-2026-08-30 23:08:54,542 - INFO - Start polling
+2026-08-30 23:14:01,768 - INFO - Start polling
 INFO:aiogram.dispatcher:Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-30 23:08:54,979 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-30 23:14:02,195 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
 WARNING:aiogram.dispatcher:Received SIGTERM signal
-2026-08-30 23:09:11,146 - WARNING - Received SIGTERM signal
+2026-08-30 23:14:18,403 - WARNING - Received SIGTERM signal
 INFO:aiogram.dispatcher:Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-30 23:09:11,147 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-08-30 23:14:18,405 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
 INFO:aiogram.dispatcher:Polling stopped
-2026-08-30 23:09:11,148 - INFO - Polling stopped
+2026-08-30 23:14:18,406 - INFO - Polling stopped
 INFO:root:🧹 Выполняется очистка ресурсов...
-2026-08-30 23:09:11,399 - INFO - 🧹 Выполняется очистка ресурсов...
+2026-08-30 23:14:18,658 - INFO - 🧹 Выполняется очистка ресурсов...
 INFO:root:✅ Бот завершил работу
-2026-08-30 23:09:11,399 - INFO - ✅ Бот завершил работу
+2026-08-30 23:14:18,659 - INFO - ✅ Бот завершил работу
