@@ -444,7 +444,8 @@ async def run_conversion(
     all_slides: bool = True,
     ranges: List[Tuple[int, int]] = None
 ):
-    # ✅ ПЕРВАЯ ВАЛИДАЦИЯ: сессия существует и принадлежит пользователю
+    # ✅ ПЕРВАЯ ВАЛИДАЦИЯ: только проверка существования сессии
+    # (без захвата блокировки и без проверки файлов)
     session = sessions.get(task_id)
     if not session:
         await callback.message.edit_text("❌ Сессия истекла.")
@@ -453,9 +454,6 @@ async def run_conversion(
         await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
         return
 
-    task_dir = session["task_dir"]
-    pptx_path = session["file_path"]
-
     # ✅ СНАЧАЛА семафор (ограничение числа конвертаций)
     async with converter_semaphore:
         # ✅ ПОТОМ блокировка задачи
@@ -463,11 +461,24 @@ async def run_conversion(
             await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
             return
 
-        # ✅ ВТОРАЯ ВАЛИДАЦИЯ: папка и файл всё ещё существуют
+        # ✅ ВТОРАЯ ВАЛИДАЦИЯ: проверяем, что сессия, папка и файл всё ещё существуют
         # (первая конвертация могла их удалить, пока мы ждали семафор)
+        session = sessions.get(task_id)
+        if not session:
+            await callback.message.edit_text("❌ Сессия была удалена другим запросом.")
+            await task_lock_manager.release(task_id, "conversion")
+            return
+
+        if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
+            await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
+            await task_lock_manager.release(task_id, "conversion")
+            return
+
+        task_dir = session["task_dir"]
+        pptx_path = session["file_path"]
+
         if not task_dir.exists() or not pptx_path.exists():
             await callback.message.edit_text("❌ Файл уже был обработан или удалён.")
-            # Освобождаем ресурсы
             sessions.pop(task_id, None)
             await task_lock_manager.release(task_id, "conversion")
             return
