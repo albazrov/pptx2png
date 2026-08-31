@@ -444,7 +444,6 @@ async def run_conversion(
     all_slides: bool = True,
     ranges: List[Tuple[int, int]] = None
 ):
-    # Получаем сессию
     session = sessions.get(task_id)
     if not session:
         await callback.message.edit_text("❌ Сессия истекла.")
@@ -459,8 +458,9 @@ async def run_conversion(
         await callback.message.edit_text("❌ Файл не найден.")
         return
 
-    # ✅ СНАЧАЛА семафор, ПОТОМ блокировка задачи
+    # ✅ СНАЧАЛА семафор (ограничение числа конвертаций)
     async with converter_semaphore:
+        # ✅ ПОТОМ блокировка задачи
         if not await task_lock_manager.acquire(task_id, "conversion"):
             await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
             return
@@ -500,7 +500,6 @@ async def run_conversion(
                 total_slides = len(all_pngs)
                 archives = []
 
-                # Сначала создаём все архивы
                 for start, end in ranges:
                     if start > total_slides:
                         await callback.message.edit_text(f"❌ Слайд {start} не существует (всего {total_slides}).")
@@ -527,14 +526,13 @@ async def run_conversion(
                         return
                     archives.append(zip_path)
 
-                # ✅ Удаляем PNG-файлы ТОЛЬКО ПОСЛЕ создания всех архивов
+                # Удаляем PNG после создания всех архивов
                 for png_path in all_pngs:
                     if png_path.exists():
                         png_path.unlink()
                 if temp_png_dir.exists():
                     shutil.rmtree(temp_png_dir)
 
-                # Отправляем архивы
                 if archives:
                     await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
                     for zip_path in archives:
@@ -556,7 +554,7 @@ async def run_conversion(
             logging.error(f"Ошибка в run_conversion: {e}", exc_info=True)
             await callback.message.edit_text(f"❌ Ошибка конвертации: {e}")
         finally:
-            # ✅ Очистка всегда выполняется
+            # ✅ Очистка выполняется всегда
             if task_dir.exists():
                 shutil.rmtree(task_dir)
             sessions.pop(task_id, None)
