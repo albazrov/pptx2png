@@ -89,7 +89,6 @@ def setup_logging(log_dir: str):
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
-    # Основной лог с ротацией (10 МБ, 5 бэкапов)
     info_handler = RotatingFileHandler(
         os.path.join(log_dir, "bot.log"),
         maxBytes=10 * 1024 * 1024,
@@ -100,7 +99,6 @@ def setup_logging(log_dir: str):
     info_handler.setFormatter(log_formatter)
     root_logger.addHandler(info_handler)
 
-    # Дебаг лог с ротацией
     debug_handler = RotatingFileHandler(
         os.path.join(log_dir, "debug.log"),
         maxBytes=10 * 1024 * 1024,
@@ -111,7 +109,6 @@ def setup_logging(log_dir: str):
     debug_handler.setFormatter(log_formatter)
     root_logger.addHandler(debug_handler)
 
-    # Вывод в консоль
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setLevel(logging.INFO)
     stdout_handler.setFormatter(log_formatter)
@@ -133,10 +130,7 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
     bot = Bot(token=bot_token)
     dp = Dispatcher()
 
-    # Инициализация менеджера пользователей
     user_mgr = UserManager(admin_id=admin_id, base_dir=Path(script_dir))
-
-    # Создаём единую HTTP-сессию для всех запросов
     http_session = aiohttp.ClientSession()
 
     def get_settings_keyboard(user_id):
@@ -186,7 +180,6 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
     async def check_access(message: types.Message) -> bool:
         return await check_access_by_user(message.from_user, bot)
 
-    # Регистрируем зависимости
     dp.workflow_data.update({
         "SHM_DIR": str(shm_dir),
         "user_mgr": user_mgr,
@@ -218,8 +211,8 @@ async def main():
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    # Запускаем фоновую очистку
-    asyncio.create_task(task_lock_manager.cleanup_loop())
+    # ✅ Фоновая очистка с увеличенным интервалом и проверкой активных операций
+    asyncio.create_task(task_lock_manager.cleanup_loop(interval=600, max_age=7200))
 
     logging.info("✅ Бот успешно инициализирован и готов к работе")
 
