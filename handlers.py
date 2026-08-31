@@ -444,6 +444,7 @@ async def run_conversion(
     all_slides: bool = True,
     ranges: List[Tuple[int, int]] = None
 ):
+    # ✅ ПЕРВАЯ ВАЛИДАЦИЯ: сессия существует и принадлежит пользователю
     session = sessions.get(task_id)
     if not session:
         await callback.message.edit_text("❌ Сессия истекла.")
@@ -454,15 +455,21 @@ async def run_conversion(
 
     task_dir = session["task_dir"]
     pptx_path = session["file_path"]
-    if not task_dir.exists() or not pptx_path.exists():
-        await callback.message.edit_text("❌ Файл не найден.")
-        return
 
     # ✅ СНАЧАЛА семафор (ограничение числа конвертаций)
     async with converter_semaphore:
         # ✅ ПОТОМ блокировка задачи
         if not await task_lock_manager.acquire(task_id, "conversion"):
             await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
+            return
+
+        # ✅ ВТОРАЯ ВАЛИДАЦИЯ: папка и файл всё ещё существуют
+        # (первая конвертация могла их удалить, пока мы ждали семафор)
+        if not task_dir.exists() or not pptx_path.exists():
+            await callback.message.edit_text("❌ Файл уже был обработан или удалён.")
+            # Освобождаем ресурсы
+            sessions.pop(task_id, None)
+            await task_lock_manager.release(task_id, "conversion")
             return
 
         try:
@@ -559,8 +566,7 @@ async def run_conversion(
                 shutil.rmtree(task_dir)
             sessions.pop(task_id, None)
             await task_lock_manager.release(task_id, "conversion")
-
-
+            
 # ==========================================
 # ОБРАБОТЧИКИ ФАЙЛОВ
 # ==========================================
