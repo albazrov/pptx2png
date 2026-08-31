@@ -20,7 +20,6 @@ class FakeArgs:
 
 
 def make_dark_mode(pptx_path, temp_output_path):
-    """Создаёт копию презентации с чёрным фоном и белым текстом."""
     prs = Presentation(pptx_path)
     BLACK = RGBColor(0, 0, 0)
     WHITE = RGBColor(255, 255, 255)
@@ -32,7 +31,7 @@ def make_dark_mode(pptx_path, temp_output_path):
         fill.fore_color.rgb = BLACK
 
         for shape in slide.shapes:
-            if shape.shape_type == 13:  # PICTURE
+            if shape.shape_type == 13:
                 slide_area = prs.slide_width * prs.slide_height
                 shape_area = shape.width * shape.height
                 if shape_area / slide_area > 0.8:
@@ -82,7 +81,6 @@ def pptx_to_pdf_crossplatform(pptx_path, output_dir):
 
 
 def ppt_to_pptx_crossplatform(ppt_path: Path, output_dir: Path) -> Path:
-    """Конвертирует старый бинарный PPT в PPTX через LibreOffice."""
     mac_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
     if os.path.exists(mac_path):
         libreoffice_path = mac_path
