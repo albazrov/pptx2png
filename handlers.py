@@ -366,23 +366,23 @@ class TaskContext:
         
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.lock_acquired:
-            await task_lock_manager.release(self.task_id, "conversion")
-        
-        # ✅ FIX BUG #20: безопасное удаление только если это точно наша папка
-        if exc_type is None:
-            if self.task_id in sessions:
-                sessions.pop(self.task_id, None)
-            if self.task_dir and self.task_dir.exists():
-                # Проверяем, что это действительно папка задачи
-                owner_file = self.task_dir / ".owner"
-                if owner_file.exists():
-                    shutil.rmtree(self.task_dir)
-                else:
-                    logging.warning(f"⚠️ Попытка удалить невалидную папку: {self.task_dir}")
+async def __aexit__(self, exc_type, exc_val, exc_tb):
+    if self.lock_acquired:
+        await task_lock_manager.release(self.task_id, "conversion")
+    
+    # Удаляем сессию из памяти в любом случае
+    sessions.pop(self.task_id, None)
+    
+    # Безопасное удаление папки задачи
+    if self.task_dir and self.task_dir.exists():
+        owner_file = self.task_dir / ".owner"
+        if owner_file.exists():
+            try:
+                shutil.rmtree(self.task_dir)
+            except Exception as e:
+                logging.error(f"Ошибка удаления папки {self.task_dir}: {e}")
         else:
-            sessions.pop(self.task_id, None)
+            logging.warning(f"⚠️ Попытка удалить невалидную папку: {self.task_dir}")
 
 
 # ==========================================
