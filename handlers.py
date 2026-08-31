@@ -711,6 +711,7 @@ async def handle_toggle_pdf(callback: types.CallbackQuery, user_mgr, get_setting
 # ==========================================
 # ОБРАБОТЧИКИ ФАЙЛОВ
 # ==========================================
+
 @router.message(F.document.file_name.lower().endswith(('.pptx', '.ppt')))
 async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, check_access):
     if not await check_access(message):
@@ -739,12 +740,13 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
         file_info = await bot.get_file(document.file_id)
         await bot.download_file(file_info.file_path, destination=file_path)
 
+        # ✅ Сразу создаём сессию в режиме ожидания ввода
         sessions[task_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
             "task_dir": task_dir,
             "file_path": file_path,
-            "awaiting_selection": False,
+            "awaiting_selection": True,
             "ranges": []
         }
         kb = InlineKeyboardBuilder()
@@ -753,7 +755,8 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
             InlineKeyboardButton(text="📝 Выбрать слайды", callback_data=f"slides_select:{task_id}")
         )
         await status_msg.edit_text(
-            f"📄 **Файл '{safe_name}' загружен.**\n\nКакие слайды конвертировать?",
+            f"📄 **Файл '{safe_name}' загружен.**\n\n"
+            "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             parse_mode="Markdown", reply_markup=kb.as_markup()
         )
     except Exception as e:
@@ -802,12 +805,13 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
                 return
             file_path = pptx_path
 
+        # В handle_docs и handle_links после успешной загрузки добавляем:
         sessions[task_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
             "task_dir": task_dir,
             "file_path": file_path,
-            "awaiting_selection": False,
+            "awaiting_selection": True,
             "ranges": []
         }
         kb = InlineKeyboardBuilder()
@@ -852,12 +856,13 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
                 shutil.rmtree(task_dir)
             return
 
+        # В handle_docs и handle_links после успешной загрузки добавляем:
         sessions[task_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
             "task_dir": task_dir,
             "file_path": file_path,
-            "awaiting_selection": False,
+            "awaiting_selection": True,
             "ranges": []
         }
         kb = InlineKeyboardBuilder()
