@@ -114,7 +114,8 @@ def validate_download_path(task_dir: Path, destination: Path) -> bool:
         return False
 
 def generate_task_id(chat_id: int, user_id: int, message_id: int) -> str:
-    return f"task_{chat_id}_{user_id}_{message_id}_{secrets.token_hex(2)}"
+    # ✅ FIX BUG #22: увеличенная длина токена для предотвращения коллизий
+    return f"task_{chat_id}_{user_id}_{message_id}_{secrets.token_hex(8)}"
 
 def parse_slides_ranges(input_text: str) -> List[Tuple[int, int]]:
     ranges = []
@@ -142,33 +143,53 @@ def parse_slides_ranges(input_text: str) -> List[Tuple[int, int]]:
                 return []
     return ranges
 
-# --- НОВАЯ ФУНКЦИЯ: Нормализация диапазонов ---
-# Объединяет ТОЛЬКО перекрывающиеся диапазоны. Соседние (1-3, 4-6) остаются отдельными.
-# Защита от бесконечных циклов при больших числах.
+# ==========================================
+# НОРМАЛИЗАЦИЯ ДИАПАЗОНОВ (ПОЛНОСТЬЮ ИСПРАВЛЕНА)
+# ==========================================
 def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """
+    Объединяет ТОЛЬКО перекрывающиеся диапазоны.
+    Соседние (1-3, 4-6) остаются отдельными.
+    Слишком большие диапазоны (>1000) игнорируются без потери предыдущих.
+    Точные дубликаты удаляются.
+    """
     if not ranges:
         return []
 
+    # ✅ FIX BUG #15: удаляем точные дубликаты
+    unique_ranges = list(dict.fromkeys(ranges))
+    
+    if not unique_ranges:
+        return []
+    
     # Сортируем по началу диапазона
-    sorted_ranges = sorted(ranges, key=lambda r: r[0])
+    sorted_ranges = sorted(unique_ranges, key=lambda r: r[0])
+    
+    # ✅ FIX BUG #19: пропускаем все слишком большие диапазоны в начале
+    start_idx = 0
+    while start_idx < len(sorted_ranges):
+        s, e = sorted_ranges[start_idx]
+        if e - s <= 1000:
+            break
+        logging.warning(f"Слишком большой диапазон {s}-{e}, игнорируем.")
+        start_idx += 1
+    
+    if start_idx >= len(sorted_ranges):
+        return []
     
     merged = []
-    start, end = sorted_ranges[0]
+    start, end = sorted_ranges[start_idx]
 
-    for next_start, next_end in sorted_ranges[1:]:
-        # Строго проверяем перекрытие. Если next_start <= end, то они пересекаются.
-        # Если next_start == end + 1, это соседство, которое мы НЕ объединяем.
+    for next_start, next_end in sorted_ranges[start_idx + 1:]:
+        # ✅ FIX BUG #11: проверка на превышение лимита
+        if next_end - next_start > 1000:
+            logging.warning(f"Слишком большой диапазон {next_start}-{next_end}, игнорируем.")
+            continue
+
+        # ✅ FIX BUG #14: строгое перекрытие (не объединяем соседние)
         if next_start <= end:
             end = max(end, next_end)
         else:
-            # Нет перекрытия — сохраняем текущий и начинаем новый
-            # Проверка безопасности перед добавлением
-            if next_end - next_start > 1000: # Лимит на размер одного диапазона
-                 # Можно вернуть ошибку или проигнорировать. Вернем предупреждение в лог.
-                 logging.warning(f"Слишком большой диапазон {next_start}-{next_end}, игнорируем.")
-                 start, end = next_start, next_end
-                 continue
-
             merged.append((start, end))
             start, end = next_start, next_end
             
@@ -176,7 +197,7 @@ def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 # ==========================================
-# ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ (ИСПРАВЛЕННАЯ)
+# ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ
 # ==========================================
 async def run_conversion(
     callback: types.CallbackQuery,
@@ -187,14 +208,6 @@ async def run_conversion(
     all_slides: bool = True,
     ranges: List[Tuple[int, int]] = None
 ):
-    # --- Helper: Безопасное сообщение об отказе ---
-    async def safe_reject(message_text: str):
-        try:
-            await callback.message.edit_text(message_text)
-        except Exception:
-            pass
-        await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
-
     # --- 1. Первая валидация (до захвата ресурсов) ---
     session = sessions.get(task_id)
     if not session:
@@ -206,10 +219,8 @@ async def run_conversion(
         return
 
     # --- 2. Ожидание слота (семафор) ---
-    # Семафор должен защищать весь процесс работы с файлами
     async with converter_semaphore:
         try:
-            # Используем контекстный менеджер для гарантии очистки
             async with TaskContext(task_id, callback, SHM_DIR) as ctx:
                 
                 cfg = user_mgr.get_user_config(callback.from_user.id)
@@ -236,13 +247,15 @@ async def run_conversion(
                         await callback.message.edit_text("❌ Ошибка конвертации всех слайдов.")
 
                 elif ranges:
-                    # ✅ FIX BUG: Нормализуем диапазоны (убираем дубли и склеиваем пересечения)
                     final_ranges = normalize_ranges(ranges)
+                    
+                    if not final_ranges:
+                        await callback.message.edit_text("❌ Нет допустимых диапазонов для конвертации.")
+                        return
                     
                     temp_png_dir = ctx.task_dir / "temp_pngs"
                     temp_png_dir.mkdir(exist_ok=True)
                     
-                    # Конвертируем все нужные слайды в PNG один раз
                     all_pngs = await convert_all_pngs(pptx_path, temp_png_dir, cfg["quality"])
                     if not all_pngs:
                         await callback.message.edit_text("❌ Не удалось конвертировать слайды в PNG.")
@@ -251,7 +264,6 @@ async def run_conversion(
                     total_slides = len(all_pngs)
                     archives = []
 
-                    # Создаем архивы по нормализованным диапазонам
                     for idx, (start, end) in enumerate(final_ranges):
                         if start > total_slides:
                             await callback.message.edit_text(f"❌ Слайд {start} не существует (всего {total_slides}).")
@@ -266,7 +278,6 @@ async def run_conversion(
                         if not selected:
                             continue
 
-                        # Используем индекс (idx), чтобы имена были уникальными даже если диапазоны совпадают
                         range_name = f"slides_{start}-{end}" if start != end else f"slide_{start}"
                         zip_path = ctx.task_dir / f"{pptx_path.stem}_part{idx + 1}_{range_name}.zip"
                         
@@ -280,7 +291,6 @@ async def run_conversion(
                             return
                         archives.append(zip_path)
 
-                    # Удаляем временные PNG после создания всех архивов
                     for png_path in all_pngs:
                         if png_path.exists():
                             png_path.unlink()
@@ -292,7 +302,7 @@ async def run_conversion(
                         for zip_path in archives:
                             if zip_path.exists():
                                 await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=f"📦 {zip_path.name}")
-                                zip_path.unlink() # Удаляем только что отправленный файл
+                                zip_path.unlink()
                         await callback.message.delete()
                         await callback.bot.send_message(
                             chat_id=chat_id,
@@ -314,6 +324,65 @@ async def run_conversion(
                 await callback.message.edit_text(f"❌ Произошла ошибка: {str(e)[:100]}")
             except Exception:
                 pass
+
+
+# ==========================================
+# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ (ИСПРАВЛЕН)
+# ==========================================
+class TaskContext:
+    def __init__(self, task_id: str, callback: types.CallbackQuery, SHM_DIR: str):
+        self.task_id = task_id
+        self.callback = callback
+        self.SHM_DIR = SHM_DIR
+        self.task_dir = None
+        self.pptx_path = None
+        self.session_data = None
+        self.lock_acquired = False
+
+    async def __aenter__(self):
+        # Проверяем сессию
+        self.session_data = sessions.get(self.task_id)
+        if not self.session_data:
+            await self.callback.message.edit_text("❌ Сессия была удалена.")
+            raise ValueError("Session not found")
+        
+        # Захватываем блокировку задачи
+        if not await task_lock_manager.acquire(self.task_id, "conversion"):
+            await self.callback.message.edit_text("⏳ Задача уже обрабатывается.")
+            raise RuntimeError("Task already processing")
+        self.lock_acquired = True
+        
+        # Проверяем файлы
+        self.task_dir = Path(self.SHM_DIR) / self.task_id
+        self.pptx_path = self.session_data.get("file_path")
+        
+        if not self.task_dir.exists():
+            await self.callback.message.edit_text("❌ Папка задачи удалена.")
+            raise FileNotFoundError("Task directory not found")
+        
+        if not self.pptx_path or not Path(self.pptx_path).exists():
+            await self.callback.message.edit_text("❌ Файл презентации удален.")
+            raise FileNotFoundError("Presentation file not found")
+        
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.lock_acquired:
+            await task_lock_manager.release(self.task_id, "conversion")
+        
+        # ✅ FIX BUG #20: безопасное удаление только если это точно наша папка
+        if exc_type is None:
+            if self.task_id in sessions:
+                sessions.pop(self.task_id, None)
+            if self.task_dir and self.task_dir.exists():
+                # Проверяем, что это действительно папка задачи
+                owner_file = self.task_dir / ".owner"
+                if owner_file.exists():
+                    shutil.rmtree(self.task_dir)
+                else:
+                    logging.warning(f"⚠️ Попытка удалить невалидную папку: {self.task_dir}")
+        else:
+            sessions.pop(self.task_id, None)
 
 
 # ==========================================
@@ -377,13 +446,12 @@ async def handle_text_input(message: types.Message, check_access, get_settings_k
     if not await check_access(message):
         return
     user_id = message.from_user.id
-    target_chat_id = message.chat.id # FIX BUG 11: Учитываем ID чата
+    target_chat_id = message.chat.id
 
     active_session = None
     active_task_id = None
     
     for tid, sess in sessions.items():
-        # FIX BUG 11: Фильтруем строго по пользователю И чату
         if sess.get("user_id") == user_id and \
            sess.get("chat_id") == target_chat_id and \
            sess.get("awaiting_selection"):
@@ -476,7 +544,6 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
         logging.error(f"Ошибка в callback_run_speller: {e}", exc_info=True)
         await callback.answer("❌ Произошла ошибка при проверке.", show_alert=True)
     finally:
-        # ✅ НЕ УДАЛЯЕМ task_dir — он нужен для конвертации!
         await task_lock_manager.release(task_id, "spelling")
 
 
@@ -528,7 +595,6 @@ async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> L
 # ПОТОКОВОЕ СОЗДАНИЕ ZIP
 # ==========================================
 def create_zip_stream(file_paths: List[Path], output_path: Path) -> Path:
-    """Создаёт ZIP-архив, НЕ удаляя исходные PNG-файлы."""
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for fpath in file_paths:
             if fpath.exists():
@@ -603,7 +669,7 @@ async def cmd_start(message: types.Message, check_access, get_settings_keyboard)
 
 
 # ==========================================
-# НАСТРОЙКИ КАЧЕСТВА И PDF
+# НАСТРОЙКИ КАЧЕСТВА И PDF (ИСПРАВЛЕНЫ)
 # ==========================================
 @router.callback_query(F.data.startswith("set_q_"))
 async def handle_quality_settings(callback: types.CallbackQuery, user_mgr, get_settings_keyboard, check_access_by_user, bot: Bot):
@@ -615,10 +681,12 @@ async def handle_quality_settings(callback: types.CallbackQuery, user_mgr, get_s
     user_mgr.update_user_config(user_id, "quality", new_quality)
     try:
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(user_id))
-        await callback.answer(f"Quality updated to: {new_quality.upper()}")
+        # ✅ FIX BUG #13: только один callback.answer()
+        await callback.answer(f"Качество обновлено: {new_quality.upper()}")
     except Exception as e:
         logging.error(f"Error updating quality keyboard: {e}")
-    await callback.answer()
+        # ✅ FIX BUG #13: ответ только при ошибке
+        await callback.answer("❌ Ошибка обновления качества", show_alert=True)
 
 @router.callback_query(F.data == "toggle_pdf")
 async def handle_toggle_pdf(callback: types.CallbackQuery, user_mgr, get_settings_keyboard, check_access_by_user, bot: Bot):
@@ -632,10 +700,12 @@ async def handle_toggle_pdf(callback: types.CallbackQuery, user_mgr, get_setting
     try:
         await callback.message.edit_reply_markup(reply_markup=get_settings_keyboard(user_id))
         status_text = "Да (ZIP + PDF)" if new_pdf_status else "Нет (Только ZIP)"
-        await callback.answer(f"PDF output: {status_text}")
+        # ✅ FIX BUG #13: только один callback.answer()
+        await callback.answer(f"PDF: {status_text}")
     except Exception as e:
         logging.error(f"Error toggling PDF keyboard: {e}")
-    await callback.answer()
+        # ✅ FIX BUG #13: ответ только при ошибке
+        await callback.answer("❌ Ошибка обновления PDF", show_alert=True)
 
 
 # ==========================================
