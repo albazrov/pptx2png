@@ -322,19 +322,24 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
     task_id = callback.data.split(":")[-1]
     task_dir = None
     task_id_for_cleanup = task_id
+    
     if not await task_lock_manager.acquire(task_id, "spelling"):
         await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
         return
+    
     try:
         task_dir, pptx_path = await _validate_task_ownership(callback, task_id, SHM_DIR)
         if not task_dir or not pptx_path:
             return
+        
         disabled_kb = InlineKeyboardBuilder()
         disabled_kb.row(InlineKeyboardButton(text="⏳ Обработка...", callback_data=f"disabled_{task_id}"))
         await callback.message.edit_reply_markup(reply_markup=disabled_kb.as_markup())
         await callback.message.edit_text("🔍 Извлекаю текст и отправляю в Яндекс.Спеллер...")
+        
         from utils import extract_text_from_pptx, check_spelling
         extract_success, slides_text = await asyncio.to_thread(extract_text_from_pptx, str(pptx_path))
+        
         if not extract_success:
             await callback.message.edit_text(
                 "❌ **Не удалось извлечь текст из презентации.**\n\n"
@@ -346,9 +351,12 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
             await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
             await callback.answer()
             return
+        
         check_success, spelling_result = await check_spelling(slides_text)
+        
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="⚙️ Всё равно конвертировать", callback_data=f"chk_conv:{task_id}"))
+        
         if not check_success:
             await callback.message.edit_text(
                 f"{spelling_result}\n\nВы можете продолжить конвертацию без проверки орфографии:",
@@ -356,16 +364,17 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
             )
         else:
             await callback.message.edit_text(spelling_result, parse_mode="HTML", reply_markup=kb.as_markup())
+        
         await callback.answer()
+        
     except Exception as e:
         logging.error(f"Ошибка в callback_run_speller: {e}", exc_info=True)
         await callback.answer("❌ Произошла ошибка при проверке.", show_alert=True)
     finally:
-        if task_dir is not None and task_dir.exists():
-            shutil.rmtree(task_dir)
+        # ✅ НЕ УДАЛЯЕМ task_dir — он нужен для конвертации!
+        # Только освобождаем блокировку
         await task_lock_manager.release(task_id_for_cleanup, "spelling")
-
-
+        
 # ==========================================
 # ОБРАБОТЧИК СТАРОЙ КОНВЕРТАЦИИ (ДЛЯ СОВМЕСТИМОСТИ)
 # ==========================================
