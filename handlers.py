@@ -8,9 +8,8 @@ from pathlib import Path
 from typing import Optional, Set, Dict, List, Tuple
 from aiogram import Router, F, types, Bot
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.utils.fs import FSInputFile
+from aiogram.types import InlineKeyboardButton, FSInputFile
 
 from utils import extract_text_from_pptx, check_spelling, download_file_by_url, core_pipeline
 import converter_engine
@@ -436,148 +435,159 @@ def create_zip_stream(file_paths: List[Path], output_path: Path) -> Path:
 # ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ
 # ==========================================
 
-async def run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True, ranges=None):
-    task_dir = Path(SHM_DIR) / task_id
-    lock_released = False
-    
-    # Вспомогательная функция для безопасной отправки ошибок
-    async def send_error_and_exit(message_text):
-        nonlocal lock_released
+async def run_conversion(
+    callback: types.CallbackQuery,
+    task_id: str,
+    SHM_DIR: str,
+    user_mgr,
+    get_settings_keyboard,
+    all_slides: bool = True,
+    ranges: List[Tuple[int, int]] = None
+):
+    # ──────────── helper: неблокирующее сообщение об отказе ────────────
+    async def reject_with(message_text: str):
+        """Отправить сообщение и ответить на callback БЕЗ удаления ресурсов."""
         try:
             await callback.message.edit_text(message_text)
         except Exception:
-            pass  # Сообщение могло быть удалено prior conversion'ом
-        
-        if not lock_released:
-            await task_lock_manager.release(task_id, "conversion")
-            lock_released = True
-            
-        sessions.pop(task_id, None)
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
-            
-        return False
+            pass
+        await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
 
-    try:
-        # ✅ ПЕРВАЯ ВАЛИДАЦИЯ (до захвата ресурсов)
+    # ──────────── ПЕРВАЯ ВАЛИДАЦИЯ (до захвата ресурсов) ────────────
+    session = sessions.get(task_id)
+    if not session:
+        await callback.message.edit_text("❌ Сессия истекла.")
+        return
+    if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
+        await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
+        return
+
+    # ──────────── СЕМФОРИ → БЛОКИРОВКА ────────────
+    async with converter_semaphore:
+        if not await task_lock_manager.acquire(task_id, "conversion"):
+            await reject_with("⏳ Задача уже обрабатывается.")
+            return
+
+        # ──────────── ВТОРАЯ ВАЛИДАЦИЯ (после acquire) ────────────
         session = sessions.get(task_id)
         if not session:
-            await send_error_and_exit("❌ Сессия истекла.")
+            await callback.message.edit_text("❌ Сессия была удалена другим запросом.")
+            await task_lock_manager.release(task_id, "conversion")
             return
+
         if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
-            await send_error_and_exit("❌ У вас нет доступа к этой задаче.")
+            await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
+            await task_lock_manager.release(task_id, "conversion")
             return
 
-        # ✅ ЗАХВАТ СЕМАФОРА И БЛОКИРОВКИ
-        async with converter_semaphore:
-            if not await task_lock_manager.acquire(task_id, "conversion"):
-                await send_error_and_exit("⏳ Задача уже обрабатывается.")
-                return
+        task_dir = session["task_dir"]
+        pptx_path = session["file_path"]
 
-            # ✅ ВТОРАЯ ВАЛИДАЦИЯ (после захвата, защита от гонки)
-            session = sessions.get(task_id)
-            if not session:
-                await send_error_and_exit("❌ Сессия была удалена другим запросом.")
-                return
-            if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
-                await send_error_and_exit("❌ У вас нет доступа к этой задаче.")
-                return
+        if not task_dir.exists() or not pptx_path.exists():
+            await callback.message.edit_text("❌ Файл уже был обработан или удалён.")
+            sessions.pop(task_id, None)
+            await task_lock_manager.release(task_id, "conversion")
+            return
 
-            task_dir = session["task_dir"]
-            pptx_path = session["file_path"]
-
-            if not task_dir.exists() or not pptx_path.exists():
-                sessions.pop(task_id, None)
-                await send_error_and_exit("❌ Файл уже был обработан или удалён.")
-                return
-
-            lock_released = True  # Передаем ответственность за релиз в finally
+        # ═══════ ОСНОВНАЯ ЛОГИКА КОНВЕРТАЦИИ ═══════
+        try:
             cfg = user_mgr.get_user_config(callback.from_user.id)
             chat_id = callback.message.chat.id
             user_id = callback.from_user.id
 
-            try:
-                if all_slides:
-                    expected_zip, final_pdf_path = await core_pipeline(pptx_path, callback.message, user_id, user_mgr)
-                    if expected_zip and expected_zip.exists():
-                        if expected_zip.stat().st_size > 45 * 1024 * 1024:
-                            await send_error_and_exit("⚠️ **Архив слишком большой (>45 МБ).**\nTelegram не позволяет отправлять файлы >50 МБ.")
-                            return
-                        await callback.message.edit_text("📤 Отправляю готовые файлы...")
-                        await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(expected_zip), caption="📦 ZIP со всеми слайдами готов!")
-                        if final_pdf_path and final_pdf_path.exists():
-                            await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(final_pdf_path), caption="📄 PDF готов!")
-                        await callback.message.delete()
-                    else:
-                        await send_error_and_exit("❌ Ошибка конвертации всех слайдов.")
+            if all_slides:
+                expected_zip, final_pdf_path = await core_pipeline(pptx_path, callback.message, user_id, user_mgr)
+                if expected_zip and expected_zip.exists():
+                    if expected_zip.stat().st_size > 45 * 1024 * 1024:
+                        await callback.message.edit_text(
+                            "⚠️ **Архив слишком большой (>45 МБ).**\nTelegram не позволяет отправлять файлы >50 МБ."
+                        )
                         return
+                    await callback.message.edit_text("📤 Отправляю готовые файлы...")
+                    await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(expected_zip),
+                                                    caption="📦 ZIP со всеми слайдами готов!")
+                    if final_pdf_path and final_pdf_path.exists():
+                        await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(final_pdf_path),
+                                                        caption="📄 PDF готов!")
+                    await callback.message.delete()
+                else:
+                    await callback.message.edit_text("❌ Ошибка конвертации всех слайдов.")
+                    return
 
-                elif ranges:
-                    temp_png_dir = task_dir / "temp_pngs"
-                    temp_png_dir.mkdir(exist_ok=True)
-                    all_pngs = await convert_all_pngs(pptx_path, temp_png_dir, cfg["quality"])
-                    if not all_pngs:
-                        await send_error_and_exit("❌ Не удалось конвертировать слайды в PNG.")
+            elif ranges:
+                temp_png_dir = task_dir / "temp_pngs"
+                temp_png_dir.mkdir(exist_ok=True)
+                all_pngs = await convert_all_pngs(pptx_path, temp_png_dir, cfg["quality"])
+                if not all_pngs:
+                    await callback.message.edit_text("❌ Не удалось конвертировать слайды в PNG.")
+                    return
+
+                total_slides = len(all_pngs)
+                archives = []
+
+                for start, end in ranges:
+                    if start > total_slides:
+                        await callback.message.edit_text(f"❌ Слайд {start} не существует (всего {total_slides}).")
                         return
+                    if end > total_slides:
+                        end = total_slides
 
-                    total_slides = len(all_pngs)
-                    archives = []
+                    selected = []
+                    for i in range(start - 1, end):
+                        if i < len(all_pngs):
+                            selected.append(all_pngs[i])
+                    if not selected:
+                        continue
 
-                    for start, end in ranges:
-                        if start > total_slides:
-                            await send_error_and_exit(f"❌ Слайд {start} не существует (всего {total_slides}).")
-                            return
-                        if end > total_slides:
-                            end = total_slides
+                    range_name = f"slides_{start}-{end}" if start != end else f"slide_{start}"
+                    zip_path = task_dir / f"{pptx_path.stem}_{range_name}.zip"
+                    create_zip_stream(selected, zip_path)
 
-                        selected = [all_pngs[i] for i in range(start - 1, end) if i < len(all_pngs)]
-                        if not selected:
-                            continue
+                    if zip_path.stat().st_size > 45 * 1024 * 1024:
+                        zip_path.unlink()
+                        await callback.message.edit_text(
+                            f"⚠️ **Архив для диапазона {start}-{end} слишком большой (>45 МБ).**"
+                        )
+                        return
+                    archives.append(zip_path)
 
-                        range_name = f"slides_{start}-{end}" if start != end else f"slide_{start}"
-                        zip_path = task_dir / f"{pptx_path.stem}_{range_name}.zip"
-                        create_zip_stream(selected, zip_path)
+                # Удаляем PNG после создания всех архивов
+                for png_path in all_pngs:
+                    if png_path.exists():
+                        png_path.unlink()
+                if temp_png_dir.exists():
+                    shutil.rmtree(temp_png_dir)
 
-                        if zip_path.stat().st_size > 45 * 1024 * 1024:
+                if archives:
+                    await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
+                    for zip_path in archives:
+                        if zip_path.exists():
+                            await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path),
+                                                            caption=f"📦 {zip_path.name}")
                             zip_path.unlink()
-                            await send_error_and_exit(f"⚠️ **Архив для диапазона {start}-{end} слишком большой (>45 МБ).**")
-                            return
-                        archives.append(zip_path)
+                    await callback.message.delete()
+                    await callback.bot.send_message(
+                        chat_id=chat_id,
+                        text="⚙️ **Настройки для следующей презентации:**",
+                        reply_markup=get_settings_keyboard(user_id)
+                    )
+                else:
+                    await callback.message.edit_text("❌ Ошибка создания архивов.")
+                    return
 
-                    for png_path in all_pngs:
-                        if png_path.exists():
-                            png_path.unlink()
-                    if temp_png_dir.exists():
-                        shutil.rmtree(temp_png_dir)
-
-                    if archives:
-                        await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
-                        for zip_path in archives:
-                            if zip_path.exists():
-                                await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=f"📦 {zip_path.name}")
-                                zip_path.unlink()
-                        await callback.message.delete()
-                        await callback.bot.send_message(chat_id=chat_id, text="⚙️ **Настройки для следующей презентации:**", reply_markup=get_settings_keyboard(user_id))
-                    else:
-                        await send_error_and_exit("❌ Ошибка создания архивов.")
-                        return
-            except Exception as e:
-                logging.error(f"Ошибка в run_conversion: {e}", exc_info=True)
-                try:
-                    await callback.message.edit_text(f"❌ Ошибка конвертации: {e}")
-                except Exception:
-                    pass
-
-    except asyncio.CancelledError:
-        pass  # Гарантирует переход в finally при отмене задачи ОС или таймаутами
-    finally:
-        # ✅ ГАРАНТИРОВАННАЯ ОЧИСТКА (исполняется ВСЕГДА)
-        if not lock_released:
+        except Exception as e:
+            logging.error(f"Ошибка в run_conversion: {e}", exc_info=True)
+            try:
+                await callback.message.edit_text(f"❌ Ошибка конвертации: {e}")
+            except Exception:
+                pass
+        finally:
+            # ✅ ГАРАНТИРОВАННЫЙ РЕЛИЗ И ОЧИСТКА
+            # release() теперь вызывается ВСЕГДА — ни один lock не утечёт
             await task_lock_manager.release(task_id, "conversion")
-        
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            if task_dir.exists():
+                shutil.rmtree(task_dir)
+            sessions.pop(task_id, None)
             
 # ==========================================
 # ОБРАБОТЧИКИ ФАЙЛОВ
