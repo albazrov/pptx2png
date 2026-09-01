@@ -829,11 +829,12 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
         return
 
     status_msg = await message.reply("⏳ Скачиваю презентацию...")
+    success = False
+    
     try:
         file_info = await bot.get_file(document.file_id)
         await bot.download_file(file_info.file_path, destination=file_path)
 
-        # Создаём сессию, сбрасываем ожидание у других сессий этого пользователя/чата
         reset_awaiting_for_user_chat(user_id, chat_id)
         sessions[task_id] = {
             "user_id": user_id,
@@ -853,12 +854,31 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             parse_mode="Markdown", reply_markup=kb.as_markup()
         )
+        success = True
+        
     except Exception as e:
         logging.error(f"Ошибка загрузки: {e}")
-        await status_msg.edit_text("❌ Ошибка загрузки.")
+        try:
+            await status_msg.edit_text("❌ Ошибка загрузки.")
+        except Exception:
+            pass
+        
+        if task_id in sessions:
+            sessions.pop(task_id, None)
         if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            try:
+                shutil.rmtree(task_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        if not success and task_id in sessions:
+            sessions.pop(task_id, None)
+            if task_dir.exists():
+                try:
+                    shutil.rmtree(task_dir)
+                except Exception:
+                    pass
 
 
 @router.message(F.document)
@@ -884,6 +904,8 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
         return
 
     status_msg = await message.reply("📥 Загрузка...")
+    success = False
+    
     try:
         file_info = await bot.get_file(message.document.file_id)
         await bot.download_file(file_info.file_path, destination=file_path)
@@ -918,16 +940,35 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             parse_mode="Markdown", reply_markup=kb.as_markup()
         )
+        success = True
+        
     except Exception as e:
         logging.error(f"Ошибка загрузки ZIP: {e}")
-        await status_msg.edit_text("❌ Ошибка обработки архива.")
+        try:
+            await status_msg.edit_text("❌ Ошибка обработки архива.")
+        except Exception:
+            pass
+        
+        if task_id in sessions:
+            sessions.pop(task_id, None)
         if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            try:
+                shutil.rmtree(task_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        if not success and task_id in sessions:
+            sessions.pop(task_id, None)
+            if task_dir.exists():
+                try:
+                    shutil.rmtree(task_dir)
+                except Exception:
+                    pass
 
 
 # ==========================================
-# ОБРАБОТЧИК ССЫЛОК
+# ОБРАБОТЧИК ССЫЛОК (ИСПРАВЛЕН)
 # ==========================================
 @router.message(F.text.contains("http://") | F.text.contains("https://"))
 async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_access):
@@ -943,12 +984,12 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
 
     file_path = task_dir / "downloaded_presentation.pptx"
     status_msg = await message.reply("🌐 Скачивание ссылки...")
+    success = False
+    
     try:
-        success = await download_file_by_url(url, file_path, status_msg)
-        if not success:
+        download_success = await download_file_by_url(url, file_path, status_msg)
+        if not download_success:
             await status_msg.edit_text("❌ Не удалось скачать файл по ссылке.")
-            if task_dir.exists():
-                shutil.rmtree(task_dir)
             return
 
         reset_awaiting_for_user_chat(user_id, chat_id)
@@ -970,8 +1011,28 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             reply_markup=kb.as_markup()
         )
+        success = True
+        
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        logging.error(f"Ошибка в handle_links: {e}")
+        try:
+            await status_msg.edit_text(f"❌ Ошибка: {e}")
+        except Exception:
+            pass
+        
+        if task_id in sessions:
+            sessions.pop(task_id, None)
         if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            try:
+                shutil.rmtree(task_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        if not success and task_id in sessions:
+            sessions.pop(task_id, None)
+            if task_dir.exists():
+                try:
+                    shutil.rmtree(task_dir)
+                except Exception:
+                    pass
