@@ -123,7 +123,30 @@ def escape_markdown(text: str) -> str:
 
 
 # ==========================================
-# 3. СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА
+# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ
+# ==========================================
+
+def cleanup_old_tasks(shm_dir: Path):
+    """Удаляет все папки задач из SHM_DIR при запуске бота."""
+    if not shm_dir.exists():
+        return
+    
+    deleted_count = 0
+    for item in shm_dir.iterdir():
+        if item.is_dir() and item.name.startswith("task_"):
+            try:
+                shutil.rmtree(item)
+                deleted_count += 1
+                logging.info(f"🧹 Удалена старая папка задачи: {item}")
+            except Exception as e:
+                logging.error(f"❌ Ошибка удаления папки {item}: {e}")
+    
+    if deleted_count > 0:
+        logging.info(f"🧹 Очищено {deleted_count} старых папок задач")
+
+
+# ==========================================
+# 4. СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА
 # ==========================================
 
 def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, script_dir: str):
@@ -196,7 +219,7 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
 
 
 # ==========================================
-# 4. ГЛАВНАЯ ФУНКЦИЯ
+# 5. ГЛАВНАЯ ФУНКЦИЯ
 # ==========================================
 
 async def main():
@@ -209,9 +232,12 @@ async def main():
     logging.info(f"RAM-диск: {shm_dir}")
     logging.info(f"Логи: {log_dir}")
 
+    # ✅ Очистка старых папок задач при запуске
+    cleanup_old_tasks(shm_dir)
+
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    # ✅ Фоновая очистка с увеличенным интервалом и проверкой активных операций
+    # ✅ Фоновая очистка с увеличенным интервалом
     asyncio.create_task(task_lock_manager.cleanup_loop(interval=600, max_age=7200))
 
     logging.info("✅ Бот успешно инициализирован и готов к работе")
@@ -234,7 +260,7 @@ async def main():
 
 
 # ==========================================
-# 5. ТОЧКА ВХОДА
+# 6. ТОЧКА ВХОДА
 # ==========================================
 
 if __name__ == "__main__":
