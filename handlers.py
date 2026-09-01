@@ -476,8 +476,17 @@ async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
     
-    # Сбрасываем ожидание у других сессий этого пользователя/чата
     session = sessions[task_id]
+    
+    # ✅ Проверка существования папки
+    task_dir = Path(session.get("task_dir", ""))
+    if not task_dir.exists():
+        sessions.pop(task_id, None)
+        await callback.answer("❌ Данные задачи устарели.", show_alert=True)
+        await callback.message.edit_text("❌ Данные задачи устарели. Пожалуйста, загрузите презентацию заново.")
+        return
+
+    
     reset_awaiting_for_user_chat(session["user_id"], session["chat_id"], exclude_task_id=task_id)
     
     sessions[task_id]["awaiting_selection"] = True
@@ -502,6 +511,15 @@ async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_D
     if not session:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    
+    # ✅ Проверка существования папки
+    task_dir = Path(session.get("task_dir", ""))
+    if not task_dir.exists():
+        sessions.pop(task_id, None)
+        await callback.answer("❌ Данные задачи устарели.", show_alert=True)
+        await callback.message.edit_text("❌ Данные задачи устарели. Пожалуйста, загрузите презентацию заново.")
+        return
+    
     ranges = session.get("ranges")
     if not ranges:
         await callback.answer("❌ Не выбраны слайды.", show_alert=True)
