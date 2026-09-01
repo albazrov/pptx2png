@@ -1,35 +1,29 @@
 warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
 INFO:root:Окружение: test
-2026-08-31 01:08:25,159 - INFO - Окружение: test
+2026-09-01 06:34:44,617 - INFO - Окружение: test
 INFO:root:RAM-диск: /dev/shm/pptx2png_tasks/test
-2026-08-31 01:08:25,159 - INFO - RAM-диск: /dev/shm/pptx2png_tasks/test
+2026-09-01 06:34:44,618 - INFO - RAM-диск: /dev/shm/pptx2png_tasks/test
 INFO:root:Логи: /dev/shm/pptx2png_tasks/test/logs
-2026-08-31 01:08:25,159 - INFO - Логи: /dev/shm/pptx2png_tasks/test/logs
+2026-09-01 06:34:44,618 - INFO - Логи: /dev/shm/pptx2png_tasks/test/logs
 INFO:root:✅ Бот успешно инициализирован и готов к работе
-2026-08-31 01:08:25,187 - INFO - ✅ Бот успешно инициализирован и готов к работе
+2026-09-01 06:34:44,646 - INFO - ✅ Бот успешно инициализирован и готов к работе
 INFO:aiogram.dispatcher:Start polling
-2026-08-31 01:08:25,188 - INFO - Start polling
+2026-09-01 06:34:44,648 - INFO - Start polling
 INFO:aiogram.dispatcher:Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-31 01:08:25,658 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-09-01 06:34:45,067 - INFO - Run polling for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
 ERROR:aiogram.dispatcher:Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
-2026-08-31 01:08:29,911 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+2026-09-01 06:34:49,303 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
 WARNING:aiogram.dispatcher:Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8498658115)
-2026-08-31 01:08:29,911 - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8498658115)
+2026-09-01 06:34:49,304 - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8498658115)
 ERROR:aiogram.dispatcher:Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
-2026-08-31 01:08:35,365 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
-WARNING:aiogram.dispatcher:Sleep for 1.229165 seconds and try again... (tryings = 1, bot id = 8498658115)
-2026-08-31 01:08:35,366 - WARNING - Sleep for 1.229165 seconds and try again... (tryings = 1, bot id = 8498658115)
-ERROR:aiogram.dispatcher:Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
-2026-08-31 01:08:41,310 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
-WARNING:aiogram.dispatcher:Sleep for 1.748702 seconds and try again... (tryings = 2, bot id = 8498658115)
-2026-08-31 01:08:41,311 - WARNING - Sleep for 1.748702 seconds and try again... (tryings = 2, bot id = 8498658115)
+2026-09-01 06:34:54,877 - ERROR - Failed to fetch updates - TelegramConflictError: Telegram server says - Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+WARNING:aiogram.dispatcher:Sleep for 1.472956 seconds and try again... (tryings = 1, bot id = 8498658115)
+2026-09-01 06:34:54,878 - WARNING - Sleep for 1.472956 seconds and try again... (tryings = 1, bot id = 8498658115)
 WARNING:aiogram.dispatcher:Received SIGTERM signal
-2026-08-31 01:08:41,645 - WARNING - Received SIGTERM signal
+2026-09-01 06:35:00,976 - WARNING - Received SIGTERM signal
 INFO:aiogram.dispatcher:Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
-2026-08-31 01:08:41,646 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
+2026-09-01 06:35:00,979 - INFO - Polling stopped for bot @pptx2png_test_bot id=8498658115 - 'pptx2png test bot'
 INFO:aiogram.dispatcher:Polling stopped
-2026-08-31 01:08:41,647 - INFO - Polling stopped
-INFO:root:🧹 Выполняется очистка ресурсов...
-2026-08-31 01:08:41,900 - INFO - 🧹 Выполняется очистка ресурсов...
+2026-09-01 06:35:00,980 - INFO - Polling stopped
 INFO:root:✅ Бот завершил работу
-2026-08-31 01:08:41,901 - INFO - ✅ Бот завершил работу
+2026-09-01 06:35:01,232 - INFO - ✅ Бот завершил работу
