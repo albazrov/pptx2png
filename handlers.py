@@ -1,5 +1,6 @@
+
 # ==========================================
-# handlers.py — ОБРАБОТЧИКИ (исправлен)
+# handlers.py — ОБРАБОТЧИКИ (полностью исправлен)
 # ==========================================
 
 import os
@@ -154,7 +155,7 @@ def touch_task(task_dir: Path):
     """
     if task_dir and task_dir.exists():
         try:
-            os.utime(task_dir, None)  # Обновляет mtime на текущее время
+            os.utime(task_dir, None)
         except Exception as e:
             logging.error(f"Ошибка touch для {task_dir}: {e}")
 
@@ -230,7 +231,7 @@ def safe_delete_task_dir(task_dir: Path):
 
 
 # ==========================================
-# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ
+# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ (ИСПРАВЛЕН)
 # ==========================================
 
 class TaskContext:
@@ -245,19 +246,13 @@ class TaskContext:
         self.lock_acquired = False
 
     async def __aenter__(self):
-        # 1. Захватываем блокировку задачи
-        if not await task_lock_manager.acquire(self.task_id):
-            await self.callback.message.edit_text("⏳ Задача уже обрабатывается.")
-            raise RuntimeError("Task already processing")
-        self.lock_acquired = True
-        
-        # 2. Проверяем сессию
+        # ✅ 1. СНАЧАЛА проверяем сессию
         self.session_data = sessions.get(self.task_id)
         if not self.session_data:
             await self.callback.message.edit_text("❌ Сессия была удалена.")
             raise ValueError("Session not found")
         
-        # 3. Проверяем файлы
+        # ✅ 2. Проверяем файлы ДО захвата блокировки
         self.task_dir = Path(self.SHM_DIR) / self.task_id
         if not self.task_dir.exists():
             await self.callback.message.edit_text("❌ Папка задачи удалена.")
@@ -267,6 +262,12 @@ class TaskContext:
         if not self.pptx_path or not Path(self.pptx_path).exists():
             await self.callback.message.edit_text("❌ Файл презентации удален.")
             raise FileNotFoundError("Presentation file not found")
+        
+        # ✅ 3. ТОЛЬКО ПОСЛЕ ВСЕХ ПРОВЕРОК — захватываем блокировку
+        if not await task_lock_manager.acquire(self.task_id):
+            await self.callback.message.edit_text("⏳ Задача уже обрабатывается.")
+            raise RuntimeError("Task already processing")
+        self.lock_acquired = True
         
         # 4. Обновляем время активности
         touch_task(self.task_dir)
