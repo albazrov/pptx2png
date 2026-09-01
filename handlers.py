@@ -153,6 +153,15 @@ def reset_awaiting_for_user_chat(user_id: int, chat_id: int, exclude_task_id: Op
                 sess["awaiting_selection"] = False
 
 # ==========================================
+# ФУНКЦИЯ ДЛЯ БЛОКИРОВКИ КНОПОК
+# ==========================================
+def get_disabled_keyboard() -> InlineKeyboardBuilder:
+    """Возвращает клавиатуру с заблокированной кнопкой."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⏳ Конвертация...", callback_data="disabled_placeholder"))
+    return kb
+
+# ==========================================
 # НОРМАЛИЗАЦИЯ ДИАПАЗОНОВ (ИСПРАВЛЕНА)
 # ==========================================
 def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
@@ -174,6 +183,9 @@ def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     
     merged = []
     start, end = sorted_ranges[0]
+    
+    # Инициализируем idx = 0
+    idx = 0
     
     # Проверяем первый диапазон на лимит (используем количество слайдов)
     if end - start + 1 > 1000:
@@ -216,7 +228,7 @@ def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 # ==========================================
-# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ (ИСПРАВЛЕН)
+# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ
 # ==========================================
 class TaskContext:
     def __init__(self, task_id: str, callback: types.CallbackQuery, SHM_DIR: str):
@@ -286,7 +298,7 @@ class TaskContext:
                 logging.warning(f"⚠️ Попытка удалить невалидную папку: {self.task_dir}")
 
 # ==========================================
-# ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ
+# ОСНОВНАЯ ФУНКЦИЯ КОНВЕРТАЦИИ (исправлена)
 # ==========================================
 async def run_conversion(
     callback: types.CallbackQuery,
@@ -301,10 +313,12 @@ async def run_conversion(
     session = sessions.get(task_id)
     if not session:
         await callback.message.edit_text("❌ Сессия истекла.")
+        await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
     
     if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
         await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
+        await callback.answer("❌ У вас нет доступа к этой задаче.", show_alert=True)
         return
 
     # --- 2. Ожидание слота (семафор) ---
@@ -401,16 +415,33 @@ async def run_conversion(
                     else:
                         await callback.message.edit_text("❌ Ошибка создания архивов.")
 
+        except RuntimeError as e:
+            # Задача уже обрабатывается — кнопка остаётся заблокированной
+            if "already processing" in str(e):
+                logging.warning(f"Попытка повторного запуска конвертации для задачи {task_id}")
+                await callback.answer("⏳ Задача уже обрабатывается, пожалуйста, подождите...", show_alert=True)
+            else:
+                logging.error(f"RuntimeError в run_conversion: {e}")
+                await callback.message.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+
         except ValueError as e:
+            # Ошибка валидации — данные уже удалены, кнопку не восстанавливаем
             logging.error(f"Ошибка валидации в run_conversion: {e}")
             await callback.message.edit_text(f"❌ Ошибка данных: {str(e)[:100]}")
+            await callback.answer("❌ Ошибка данных, попробуйте заново.", show_alert=True)
+
         except FileNotFoundError as e:
+            # Файл не найден — данные уже удалены
             logging.error(f"Файл не найден: {e}")
             await callback.message.edit_text("❌ Презентация была удалена или повреждена.")
+            await callback.answer("❌ Презентация не найдена.", show_alert=True)
+
         except Exception as e:
+            # Неожиданная ошибка — данные уже удалены, кнопку не восстанавливаем
             logging.error(f"Неожиданная ошибка в run_conversion: {e}", exc_info=True)
             try:
                 await callback.message.edit_text(f"❌ Произошла ошибка: {str(e)[:100]}")
+                await callback.answer("❌ Произошла ошибка, попробуйте заново.", show_alert=True)
             except Exception:
                 pass
 
@@ -427,6 +458,13 @@ async def handle_all_slides(callback: types.CallbackQuery, bot: Bot, SHM_DIR: st
     if task_id not in sessions:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text("⚙️ Запускаю конвертацию всех слайдов...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True)
@@ -438,7 +476,7 @@ async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
     
-    # ✅ Сбрасываем ожидание у других сессий этого пользователя/чата
+    # Сбрасываем ожидание у других сессий этого пользователя/чата
     session = sessions[task_id]
     reset_awaiting_for_user_chat(session["user_id"], session["chat_id"], exclude_task_id=task_id)
     
@@ -468,10 +506,24 @@ async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_D
     if not ranges:
         await callback.answer("❌ Не выбраны слайды.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text(f"⚙️ Запускаю конвертацию {len(ranges)} диапазон(ов)...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=False, ranges=ranges)
 
+# ==========================================
+# ОБРАБОТЧИК НАЖАТИЯ НА ЗАБЛОКИРОВАННУЮ КНОПКУ
+# ==========================================
+@router.callback_query(F.data == "disabled_placeholder")
+async def handle_disabled_button(callback: types.CallbackQuery):
+    """Обработчик нажатия на заблокированную кнопку."""
+    await callback.answer("⏳ Идёт обработка, пожалуйста, подождите...", show_alert=True)
 
 # ==========================================
 # ОБРАБОТЧИК ТЕКСТА (ВВОД СЛАЙДОВ)
@@ -598,6 +650,13 @@ async def callback_run_conversion(callback: types.CallbackQuery, bot: Bot, SHM_D
     if task_id not in sessions:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text("⚙️ Запускаю конвертацию...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True)
@@ -770,12 +829,13 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
         return
 
     status_msg = await message.reply("⏳ Скачиваю презентацию...")
+    success = False
+    
     try:
         file_info = await bot.get_file(document.file_id)
         await bot.download_file(file_info.file_path, destination=file_path)
 
-        # Создаём сессию, сбрасываем ожидание у других сессий этого пользователя/чата
-        reset_awaiting_for_user_chat(user_id, chat_id)  # сбрасываем все старые
+        reset_awaiting_for_user_chat(user_id, chat_id)
         sessions[task_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
@@ -794,12 +854,31 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             parse_mode="Markdown", reply_markup=kb.as_markup()
         )
+        success = True
+        
     except Exception as e:
         logging.error(f"Ошибка загрузки: {e}")
-        await status_msg.edit_text("❌ Ошибка загрузки.")
+        try:
+            await status_msg.edit_text("❌ Ошибка загрузки.")
+        except Exception:
+            pass
+        
+        if task_id in sessions:
+            sessions.pop(task_id, None)
         if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            try:
+                shutil.rmtree(task_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        if not success and task_id in sessions:
+            sessions.pop(task_id, None)
+            if task_dir.exists():
+                try:
+                    shutil.rmtree(task_dir)
+                except Exception:
+                    pass
 
 
 @router.message(F.document)
@@ -825,6 +904,8 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
         return
 
     status_msg = await message.reply("📥 Загрузка...")
+    success = False
+    
     try:
         file_info = await bot.get_file(message.document.file_id)
         await bot.download_file(file_info.file_path, destination=file_path)
@@ -859,16 +940,35 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             parse_mode="Markdown", reply_markup=kb.as_markup()
         )
+        success = True
+        
     except Exception as e:
         logging.error(f"Ошибка загрузки ZIP: {e}")
-        await status_msg.edit_text("❌ Ошибка обработки архива.")
+        try:
+            await status_msg.edit_text("❌ Ошибка обработки архива.")
+        except Exception:
+            pass
+        
+        if task_id in sessions:
+            sessions.pop(task_id, None)
         if task_dir.exists():
-            shutil.rmtree(task_dir)
-        sessions.pop(task_id, None)
+            try:
+                shutil.rmtree(task_dir)
+            except Exception:
+                pass
+        raise
+    finally:
+        if not success and task_id in sessions:
+            sessions.pop(task_id, None)
+            if task_dir.exists():
+                try:
+                    shutil.rmtree(task_dir)
+                except Exception:
+                    pass
 
 
 # ==========================================
-# ОБРАБОТЧИК ССЫЛОК
+# ОБРАБОТЧИК ССЫЛОК (ИСПРАВЛЕН)
 # ==========================================
 @router.message(F.text.contains("http://") | F.text.contains("https://"))
 async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_access):
@@ -884,13 +984,15 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
 
     file_path = task_dir / "downloaded_presentation.pptx"
     status_msg = await message.reply("🌐 Скачивание ссылки...")
+    
+    # Флаг: нужно ли сохранять папку
+    keep_dir = False
+    
     try:
-        success = await download_file_by_url(url, file_path, status_msg)
-        if not success:
+        download_success = await download_file_by_url(url, file_path, status_msg)
+        if not download_success:
             await status_msg.edit_text("❌ Не удалось скачать файл по ссылке.")
-            if task_dir.exists():
-                shutil.rmtree(task_dir)
-            return
+            return  # finally удалит папку
 
         reset_awaiting_for_user_chat(user_id, chat_id)
         sessions[task_id] = {
@@ -901,6 +1003,7 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             "awaiting_selection": True,
             "ranges": []
         }
+        
         kb = InlineKeyboardBuilder()
         kb.row(
             InlineKeyboardButton(text="📊 Все слайды", callback_data=f"slides_all:{task_id}"),
@@ -911,8 +1014,23 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             reply_markup=kb.as_markup()
         )
+        keep_dir = True  # ✅ Успех — сохраняем папку
+        
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
+        logging.error(f"Ошибка в handle_links: {e}")
+        try:
+            await status_msg.edit_text(f"❌ Ошибка: {e}")
+        except Exception:
+            pass
+        # ✅ Удаляем сессию
         sessions.pop(task_id, None)
+        raise  # finally удалит папку
+        
+    finally:
+        # ✅ Удаляем папку, если она не нужна
+        if not keep_dir and task_dir.exists():
+            try:
+                shutil.rmtree(task_dir)
+                logging.info(f"🧹 Очищена папка {task_dir}")
+            except Exception as e:
+                logging.error(f"Ошибка удаления папки {task_dir}: {e}")
