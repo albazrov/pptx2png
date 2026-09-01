@@ -1,3 +1,7 @@
+# ==========================================
+# bot.py — ГЛАВНЫЙ ФАЙЛ (исправлен)
+# ==========================================
+
 import sys
 import os
 import logging
@@ -15,7 +19,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
 from user_manager import UserManager
-from handlers import router, sessions
+from handlers import router, sessions, task_lock_manager
 
 
 # ==========================================
@@ -115,7 +119,7 @@ def setup_logging(log_dir: str):
 
 
 # ==========================================
-# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ (УПРОЩЁННАЯ)
+# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ
 # ==========================================
 
 def cleanup_all_tasks(shm_dir: Path):
@@ -156,7 +160,7 @@ def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
             continue
         
         try:
-            # Время последнего изменения папки
+            # Время последнего изменения папки (обновляется через touch_task)
             mtime = item.stat().st_mtime
             age_seconds = current_time - mtime
             
@@ -172,6 +176,11 @@ def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
         logging.info(f"🧹 Очищено {deleted} старых папок")
 
 
+async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 3600):
+    """Асинхронная обёртка для cleanup_old_tasks (не блокирует event loop)."""
+    await asyncio.to_thread(cleanup_old_tasks, shm_dir, max_age_seconds)
+
+
 async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
     """
     Фоновый цикл очистки старых задач.
@@ -179,7 +188,7 @@ async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
     """
     while True:
         await asyncio.sleep(interval)
-        cleanup_old_tasks(shm_dir, max_age)
+        await cleanup_old_tasks_async(shm_dir, max_age)
 
 
 # ==========================================
