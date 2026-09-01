@@ -841,6 +841,9 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / ".owner").write_text(f"{user_id}:{chat_id}")
 
+    # ✅ Добавляем .pid
+    (task_dir / ".pid").write_text(f"{os.getpid()}:{time.time()}")
+    
     file_path = task_dir / safe_name
     if not validate_download_path(task_dir, file_path):
         await message.reply("❌ Ошибка безопасности.")
@@ -915,6 +918,8 @@ async def handle_docs(message: types.Message, bot: Bot, SHM_DIR: str, check_acce
     task_dir = Path(SHM_DIR) / task_id
     task_dir.mkdir(exist_ok=True)
     (task_dir / ".owner").write_text(f"{user_id}:{chat_id}")
+    # ✅ Добавляем .pid
+    (task_dir / ".pid").write_text(f"{os.getpid()}:{time.time()}")
 
     file_path = task_dir / safe_name
     if not validate_download_path(task_dir, file_path):
@@ -999,6 +1004,8 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
     task_dir = Path(SHM_DIR) / task_id
     task_dir.mkdir(exist_ok=True)
     (task_dir / ".owner").write_text(f"{user_id}:{chat_id}")
+    # ✅ Добавляем .pid
+    (task_dir / ".pid").write_text(f"{os.getpid()}:{time.time()}")
 
     file_path = task_dir / "downloaded_presentation.pptx"
     status_msg = await message.reply("🌐 Скачивание ссылки...")
