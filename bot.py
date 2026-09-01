@@ -185,10 +185,15 @@ async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
     """
     Фоновый цикл очистки старых задач.
     Запускается каждые interval секунд.
+    Ошибки не прерывают цикл.
     """
     while True:
         await asyncio.sleep(interval)
-        await cleanup_old_tasks_async(shm_dir, max_age)
+        try:
+            await cleanup_old_tasks_async(shm_dir, max_age)
+        except Exception as e:
+            logging.error(f"❌ Ошибка в cleanup_loop: {e}", exc_info=True)
+            # Продолжаем работу
 
 
 # ==========================================
