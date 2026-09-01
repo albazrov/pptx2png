@@ -416,55 +416,35 @@ async def run_conversion(
                         await callback.message.edit_text("❌ Ошибка создания архивов.")
 
         except RuntimeError as e:
-            # ✅ Исправлено: НЕ восстанавливаем кнопку — оставляем заблокированной
+            # Задача уже обрабатывается — кнопка остаётся заблокированной
             if "already processing" in str(e):
                 logging.warning(f"Попытка повторного запуска конвертации для задачи {task_id}")
                 await callback.answer("⏳ Задача уже обрабатывается, пожалуйста, подождите...", show_alert=True)
             else:
                 logging.error(f"RuntimeError в run_conversion: {e}")
                 await callback.message.edit_text(f"❌ Ошибка: {str(e)[:100]}")
-except ValueError as e:
-    logging.error(f"Ошибка валидации в run_conversion: {e}")
-    await callback.message.edit_text(f"❌ Ошибка данных: {str(e)[:100]}")
-    # ✅ Восстанавливаем кнопку при ошибке валидации
-    if ranges:
-        await restore_conversion_button(callback, task_id, ranges)
 
-    # add
-    
-    except FileNotFoundError as e:
-        logging.error(f"Файл не найден: {e}")
-        await callback.message.edit_text("❌ Презентация была удалена или повреждена.")
-        # ❌ Здесь кнопку восстанавливать не нужно — файла нет
-    except Exception as e:
-        logging.error(f"Неожиданная ошибка в run_conversion: {e}", exc_info=True)
-        try:
-            await callback.message.edit_text(f"❌ Произошла ошибка: {str(e)[:100]}")
-            # ✅ Восстанавливаем кнопку при неожиданной ошибке (пользователь может повторить)
-            if ranges:
-                await restore_conversion_button(callback, task_id, ranges)
-        except Exception:
-            pass
-    
-    #---
+        except ValueError as e:
+            # Ошибка валидации — данные уже удалены, кнопку не восстанавливаем
+            logging.error(f"Ошибка валидации в run_conversion: {e}")
+            await callback.message.edit_text(f"❌ Ошибка данных: {str(e)[:100]}")
+            await callback.answer("❌ Ошибка данных, попробуйте заново.", show_alert=True)
 
-# ❌ УДАЛЯЕМ функцию restore_conversion_button (она больше не нужна)
+        except FileNotFoundError as e:
+            # Файл не найден — данные уже удалены
+            logging.error(f"Файл не найден: {e}")
+            await callback.message.edit_text("❌ Презентация была удалена или повреждена.")
+            await callback.answer("❌ Презентация не найдена.", show_alert=True)
 
-# ==========================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ВОССТАНОВЛЕНИЯ КНОПКИ
-# ==========================================
-async def restore_conversion_button(callback: types.CallbackQuery, task_id: str, ranges: List[Tuple[int, int]]):
-    """Восстанавливает кнопку 'Конвертировать' в случае ошибки."""
-    try:
-        ranges_text = ", ".join([f"{r[0]}-{r[1]}" if r[0] != r[1] else str(r[0]) for r in ranges])
-        kb = InlineKeyboardBuilder()
-        kb.row(
-            InlineKeyboardButton(text="✅ Конвертировать", callback_data=f"slides_convert:{task_id}"),
-            InlineKeyboardButton(text="✏️ Изменить", callback_data=f"slides_select:{task_id}")
-        )
-        await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
-    except Exception:
-        pass
+        except Exception as e:
+            # Неожиданная ошибка — данные уже удалены, кнопку не восстанавливаем
+            logging.error(f"Неожиданная ошибка в run_conversion: {e}", exc_info=True)
+            try:
+                await callback.message.edit_text(f"❌ Произошла ошибка: {str(e)[:100]}")
+                await callback.answer("❌ Произошла ошибка, попробуйте заново.", show_alert=True)
+            except Exception:
+                pass
+
 
 # ==========================================
 # ХЕНДЛЕРЫ ВЫБОРА СЛАЙДОВ
