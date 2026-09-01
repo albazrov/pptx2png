@@ -153,6 +153,15 @@ def reset_awaiting_for_user_chat(user_id: int, chat_id: int, exclude_task_id: Op
                 sess["awaiting_selection"] = False
 
 # ==========================================
+# ФУНКЦИЯ ДЛЯ БЛОКИРОВКИ КНОПОК
+# ==========================================
+def get_disabled_keyboard() -> InlineKeyboardBuilder:
+    """Возвращает клавиатуру с заблокированной кнопкой."""
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⏳ Конвертация...", callback_data="disabled_placeholder"))
+    return kb
+
+# ==========================================
 # НОРМАЛИЗАЦИЯ ДИАПАЗОНОВ (ИСПРАВЛЕНА)
 # ==========================================
 def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
@@ -174,6 +183,9 @@ def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     
     merged = []
     start, end = sorted_ranges[0]
+    
+    # Инициализируем idx = 0
+    idx = 0
     
     # Проверяем первый диапазон на лимит (используем количество слайдов)
     if end - start + 1 > 1000:
@@ -216,7 +228,7 @@ def normalize_ranges(ranges: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return merged
 
 # ==========================================
-# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ (ИСПРАВЛЕН)
+# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ
 # ==========================================
 class TaskContext:
     def __init__(self, task_id: str, callback: types.CallbackQuery, SHM_DIR: str):
@@ -301,10 +313,12 @@ async def run_conversion(
     session = sessions.get(task_id)
     if not session:
         await callback.message.edit_text("❌ Сессия истекла.")
+        await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
     
     if callback.from_user.id != session["user_id"] or callback.message.chat.id != session["chat_id"]:
         await callback.message.edit_text("❌ У вас нет доступа к этой задаче.")
+        await callback.answer("❌ У вас нет доступа к этой задаче.", show_alert=True)
         return
 
     # --- 2. Ожидание слота (семафор) ---
@@ -401,6 +415,16 @@ async def run_conversion(
                     else:
                         await callback.message.edit_text("❌ Ошибка создания архивов.")
 
+        except RuntimeError as e:
+            # Обработка случая, когда задача уже обрабатывается
+            if "already processing" in str(e):
+                await callback.answer("⏳ Задача уже обрабатывается, пожалуйста, подождите...", show_alert=True)
+                # Восстанавливаем кнопку "Конвертировать" для повторной попытки
+                if ranges:
+                    await restore_conversion_button(callback, task_id, ranges)
+            else:
+                logging.error(f"RuntimeError в run_conversion: {e}")
+                await callback.message.edit_text(f"❌ Ошибка: {str(e)[:100]}")
         except ValueError as e:
             logging.error(f"Ошибка валидации в run_conversion: {e}")
             await callback.message.edit_text(f"❌ Ошибка данных: {str(e)[:100]}")
@@ -414,6 +438,21 @@ async def run_conversion(
             except Exception:
                 pass
 
+# ==========================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ВОССТАНОВЛЕНИЯ КНОПКИ
+# ==========================================
+async def restore_conversion_button(callback: types.CallbackQuery, task_id: str, ranges: List[Tuple[int, int]]):
+    """Восстанавливает кнопку 'Конвертировать' в случае ошибки."""
+    try:
+        ranges_text = ", ".join([f"{r[0]}-{r[1]}" if r[0] != r[1] else str(r[0]) for r in ranges])
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            InlineKeyboardButton(text="✅ Конвертировать", callback_data=f"slides_convert:{task_id}"),
+            InlineKeyboardButton(text="✏️ Изменить", callback_data=f"slides_select:{task_id}")
+        )
+        await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
+    except Exception:
+        pass
 
 # ==========================================
 # ХЕНДЛЕРЫ ВЫБОРА СЛАЙДОВ
@@ -427,6 +466,13 @@ async def handle_all_slides(callback: types.CallbackQuery, bot: Bot, SHM_DIR: st
     if task_id not in sessions:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text("⚙️ Запускаю конвертацию всех слайдов...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True)
@@ -438,7 +484,7 @@ async def handle_select_slides(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
     
-    # ✅ Сбрасываем ожидание у других сессий этого пользователя/чата
+    # Сбрасываем ожидание у других сессий этого пользователя/чата
     session = sessions[task_id]
     reset_awaiting_for_user_chat(session["user_id"], session["chat_id"], exclude_task_id=task_id)
     
@@ -468,10 +514,24 @@ async def handle_convert_selected(callback: types.CallbackQuery, bot: Bot, SHM_D
     if not ranges:
         await callback.answer("❌ Не выбраны слайды.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text(f"⚙️ Запускаю конвертацию {len(ranges)} диапазон(ов)...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=False, ranges=ranges)
 
+# ==========================================
+# ОБРАБОТЧИК НАЖАТИЯ НА ЗАБЛОКИРОВАННУЮ КНОПКУ
+# ==========================================
+@router.callback_query(F.data == "disabled_placeholder")
+async def handle_disabled_button(callback: types.CallbackQuery):
+    """Обработчик нажатия на заблокированную кнопку."""
+    await callback.answer("⏳ Идёт обработка, пожалуйста, подождите...", show_alert=True)
 
 # ==========================================
 # ОБРАБОТЧИК ТЕКСТА (ВВОД СЛАЙДОВ)
@@ -598,6 +658,13 @@ async def callback_run_conversion(callback: types.CallbackQuery, bot: Bot, SHM_D
     if task_id not in sessions:
         await callback.answer("❌ Сессия истекла.", show_alert=True)
         return
+    
+    # Блокируем кнопку
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_disabled_keyboard().as_markup())
+    except Exception:
+        pass
+    
     await callback.answer("⏳ Начинаю конвертацию...")
     await callback.message.edit_text("⚙️ Запускаю конвертацию...")
     await run_conversion(callback, task_id, SHM_DIR, user_mgr, get_settings_keyboard, all_slides=True)
@@ -775,7 +842,7 @@ async def handle_pptx_document(message: types.Message, bot: Bot, SHM_DIR: str, c
         await bot.download_file(file_info.file_path, destination=file_path)
 
         # Создаём сессию, сбрасываем ожидание у других сессий этого пользователя/чата
-        reset_awaiting_for_user_chat(user_id, chat_id)  # сбрасываем все старые
+        reset_awaiting_for_user_chat(user_id, chat_id)
         sessions[task_id] = {
             "user_id": user_id,
             "chat_id": chat_id,
