@@ -5,20 +5,17 @@ import asyncio
 import shutil
 import configparser
 import argparse
-import signal
 import time
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, InlineKeyboardButton
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
-import converter_engine
 from user_manager import UserManager
-from handlers import router, sessions, task_lock_manager
+from handlers import router, sessions
 
 
 # ==========================================
@@ -117,92 +114,72 @@ def setup_logging(log_dir: str):
     root_logger.addHandler(stdout_handler)
 
 
-def escape_markdown(text: str) -> str:
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
-
-
 # ==========================================
-# 3. БЕЗОПАСНАЯ ОЧИСТКА СТАРЫХ ЗАДАЧ
+# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ (УПРОЩЁННАЯ)
 # ==========================================
 
-def is_process_alive(pid: int) -> bool:
-    """Проверяет, существует ли процесс с указанным PID."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-    except Exception:
-        return False
-
-def get_owner_info(task_dir: Path) -> tuple:
-    """Возвращает (pid, timestamp) из папки задачи."""
-    pid_file = task_dir / ".pid"
-    if not pid_file.exists():
-        return None, None
-    
-    try:
-        content = pid_file.read_text().strip()
-        parts = content.split(":")
-        if len(parts) >= 2:
-            pid = int(parts[0])
-            timestamp = float(parts[1]) if parts[1] else None
-            return pid, timestamp
-        return int(content), None
-    except Exception:
-        return None, None
-
-def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 1800):
+def cleanup_all_tasks(shm_dir: Path):
     """
-    Безопасная очистка старых папок задач.
-    Удаляет папки, если:
-    1. Процесс-владелец не жив (PID не существует).
-    2. ИЛИ папка старше max_age_seconds (защита от зависших процессов).
+    Удаляет ВСЕ папки задач при запуске бота.
+    Так как /dev/shm — временное хранилище, при старте бота можно безопасно удалить всё.
+    """
+    if not shm_dir.exists():
+        return
+    
+    deleted = 0
+    for item in shm_dir.iterdir():
+        if item.is_dir() and item.name.startswith("task_"):
+            try:
+                shutil.rmtree(item)
+                deleted += 1
+                logging.info(f"🧹 Удалена папка при старте: {item.name}")
+            except Exception as e:
+                logging.error(f"Ошибка удаления {item}: {e}")
+    
+    if deleted:
+        logging.info(f"🧹 Очищено {deleted} папок при старте")
+
+
+def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
+    """
+    Удаляет папки старше max_age_seconds.
+    Вызывается периодически из фонового процесса.
     """
     if not shm_dir.exists():
         return
     
     current_time = time.time()
-    deleted_count = 0
-    my_pid = os.getpid()
+    deleted = 0
     
     for item in shm_dir.iterdir():
         if not item.is_dir() or not item.name.startswith("task_"):
             continue
         
-        pid, timestamp = get_owner_info(item)
-        
-        # Папка нашего процесса — никогда не удаляем
-        if pid == my_pid:
-            logging.debug(f"📁 Папка {item.name} принадлежит текущему процессу, пропускаем")
-            continue
-        
-        should_delete = False
-        reason = ""
-        
-        if pid is None:
-            should_delete = True
-            reason = "нет информации о владельце"
-        elif not is_process_alive(pid):
-            should_delete = True
-            reason = f"процесс {pid} не существует"
-        elif timestamp and (current_time - timestamp) > max_age_seconds:
-            should_delete = True
-            reason = f"старше {max_age_seconds} секунд"
-        
-        if should_delete:
-            try:
+        try:
+            # Время последнего изменения папки
+            mtime = item.stat().st_mtime
+            age_seconds = current_time - mtime
+            
+            if age_seconds > max_age_seconds:
                 shutil.rmtree(item)
-                deleted_count += 1
-                logging.info(f"🧹 Удалена папка {item.name} ({reason})")
-            except Exception as e:
-                logging.error(f"❌ Ошибка удаления папки {item}: {e}")
+                deleted += 1
+                age_min = age_seconds / 60
+                logging.info(f"🧹 Удалена старая папка {item.name} ({age_min:.1f} мин)")
+        except Exception as e:
+            logging.error(f"Ошибка обработки {item}: {e}")
     
-    if deleted_count > 0:
-        logging.info(f"🧹 Очищено {deleted_count} старых папок задач")
+    if deleted:
+        logging.info(f"🧹 Очищено {deleted} старых папок")
+
+
+async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
+    """
+    Фоновый цикл очистки старых задач.
+    Запускается каждые interval секунд.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        cleanup_old_tasks(shm_dir, max_age)
 
 
 # ==========================================
@@ -283,21 +260,22 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
 # ==========================================
 
 async def main():
-    logging.info("Запуск PPTX2PNG Telegram Bot...")
+    logging.info("🚀 Запуск PPTX2PNG Telegram Bot...")
 
     script_dir, env_name, bot_token, admin_id, shm_dir, log_dir = setup_environment()
     setup_logging(log_dir)
 
-    logging.info(f"Окружение: {env_name}")
-    logging.info(f"RAM-диск: {shm_dir}")
-    logging.info(f"Логи: {log_dir}")
+    logging.info(f"📁 Окружение: {env_name}")
+    logging.info(f"💾 RAM-диск: {shm_dir}")
+    logging.info(f"📄 Логи: {log_dir}")
 
-    # ✅ Безопасная очистка старых папок (не удаляет активные)
-    cleanup_old_tasks(shm_dir, max_age_seconds=1800)
+    # ✅ 1. Полная очистка при старте (так как /dev/shm — временное хранилище)
+    cleanup_all_tasks(shm_dir)
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    asyncio.create_task(task_lock_manager.cleanup_loop(interval=600, max_age=7200))
+    # ✅ 2. Фоновый процесс очистки старых задач (каждые 10 минут)
+    asyncio.create_task(cleanup_loop(shm_dir, interval=600, max_age=3600))
 
     logging.info("✅ Бот успешно инициализирован и готов к работе")
 
