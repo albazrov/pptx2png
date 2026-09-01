@@ -984,13 +984,15 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
 
     file_path = task_dir / "downloaded_presentation.pptx"
     status_msg = await message.reply("🌐 Скачивание ссылки...")
-    success = False
+    
+    # Флаг: нужно ли сохранять папку
+    keep_dir = False
     
     try:
         download_success = await download_file_by_url(url, file_path, status_msg)
         if not download_success:
             await status_msg.edit_text("❌ Не удалось скачать файл по ссылке.")
-            return
+            return  # finally удалит папку
 
         reset_awaiting_for_user_chat(user_id, chat_id)
         sessions[task_id] = {
@@ -1001,6 +1003,7 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             "awaiting_selection": True,
             "ranges": []
         }
+        
         kb = InlineKeyboardBuilder()
         kb.row(
             InlineKeyboardButton(text="📊 Все слайды", callback_data=f"slides_all:{task_id}"),
@@ -1011,7 +1014,7 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             "Вы можете сразу ввести номера слайдов в чат или выбрать вариант ниже:",
             reply_markup=kb.as_markup()
         )
-        success = True
+        keep_dir = True  # ✅ Успех — сохраняем папку
         
     except Exception as e:
         logging.error(f"Ошибка в handle_links: {e}")
@@ -1019,20 +1022,15 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
             await status_msg.edit_text(f"❌ Ошибка: {e}")
         except Exception:
             pass
+        # ✅ Удаляем сессию
+        sessions.pop(task_id, None)
+        raise  # finally удалит папку
         
-        if task_id in sessions:
-            sessions.pop(task_id, None)
-        if task_dir.exists():
+    finally:
+        # ✅ Удаляем папку, если она не нужна
+        if not keep_dir and task_dir.exists():
             try:
                 shutil.rmtree(task_dir)
-            except Exception:
-                pass
-        raise
-    finally:
-        if not success and task_id in sessions:
-            sessions.pop(task_id, None)
-            if task_dir.exists():
-                try:
-                    shutil.rmtree(task_dir)
-                except Exception:
-                    pass
+                logging.info(f"🧹 Очищена папка {task_dir}")
+            except Exception as e:
+                logging.error(f"Ошибка удаления папки {task_dir}: {e}")
