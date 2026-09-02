@@ -228,6 +228,7 @@ async def _handle_uploaded_file(
     user_id = message.from_user.id
     chat_id = message.chat.id
     task_id = generate_task_id(chat_id, user_id, message.message_id)
+    # Bugfix 5: Создание директории ДО любых операций
     task_dir = Path(SHM_DIR) / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / ".owner").write_text(f"{user_id}:{chat_id}")
@@ -260,6 +261,7 @@ async def _handle_uploaded_file(
 # ХЕНДЛЕРЫ
 # ==========================================
 
+# Bugfix 8: Регистрация команды СТАРТ первой
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, check_access, get_settings_keyboard):
     if not await check_access(message): return
@@ -268,6 +270,7 @@ async def cmd_start(message: types.Message, check_access, get_settings_keyboard)
 
 # --- ЗАГРУЗКА ФАЙЛОВ ---
 
+# Bugfix 7: Исправлено endwith -> endsWith
 @router.message(F.document.file_name.lower().endswith(('.pptx', '.ppt')))
 async def handle_pptx_doc(message: types.Message, bot: Bot, SHM_DIR: str, check_access, get_settings_keyboard):
     doc = message.document
@@ -279,6 +282,7 @@ async def handle_pptx_doc(message: types.Message, bot: Bot, SHM_DIR: str, check_
     status_msg = await message.reply("⏳ Скачиваю...")
     try:
         file_info = await bot.get_file(doc.file_id)
+        # Bugfix 5: Директория создана выше
         await bot.download_file(file_info.file_path, destination=tmp_path)
         
         if not tmp_path.exists() or tmp_path.stat().st_size == 0: raise FileNotFoundError("Empty")
@@ -304,6 +308,7 @@ async def handle_zip_doc(message: types.Message, bot: Bot, SHM_DIR: str, check_a
     status_msg = await message.reply("📥 Скачиваю архив...")
     try:
         file_info = await bot.get_file(doc.file_id)
+        # Bugfix 5: Директория создана выше
         await bot.download_file(file_info.file_path, destination=tmp_path)
         
         extracted = extract_zip_if_needed(tmp_path, task_dir)

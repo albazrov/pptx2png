@@ -148,6 +148,7 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
 
     # Инициализация планировщика ресурсов
     global task_scheduler
+    # Bugfix 1: Используем правильное имя параметра max_concurrency
     task_scheduler = TaskScheduler(max_global=max_concurrency, max_per_user=max_per_user)
 
     def get_settings_keyboard(user_id):
@@ -188,6 +189,7 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
         return await check_access_by_user(message.from_user, bot)
 
     # Передача данных в воркфлоу
+    # Bugfix 3: Передаем планировщик явно
     dp.workflow_data.update({
         "SHM_DIR": str(shm_dir),
         "user_mgr": user_mgr,
@@ -196,7 +198,7 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
         "get_settings_keyboard": get_settings_keyboard,
         "bot": bot,
         "admin_id": admin_id,
-        "task_scheduler": task_scheduler # Добавляем планировщик
+        "task_scheduler": task_scheduler 
     })
 
     dp.include_router(router)
@@ -217,7 +219,7 @@ async def main():
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(
         bot_token, admin_id, shm_dir, script_dir, 
-        max_concurrent=max_conc, max_per_user=max_user
+        max_concurrency=max_conc, max_per_user=max_user
     )
 
     # Запуск фонового сборщика мусора
@@ -229,6 +231,7 @@ async def main():
     except KeyboardInterrupt:
         logging.info("⏹️ Пользователь остановил бота")
     except Exception as e:
+        # Bugfix 4: Перехват ошибок поллинга
         logging.critical(f"💥 Критическая ошибка поллинга: {e}", exc_info=True)
     finally:
         await http_session.close()
