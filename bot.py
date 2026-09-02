@@ -1,5 +1,5 @@
 # ==========================================
-# bot.py — ГЛАВНЫЙ ФАЙЛ (исправлен)
+# bot.py — ГЛАВНЫЙ ЗАПУСКНОЙ СКРИПТ (исправлен)
 # ==========================================
 
 import sys
@@ -119,51 +119,29 @@ def setup_logging(log_dir: str):
 
 
 # ==========================================
-# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ
+# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ (периодическая)
 # ==========================================
 
-def cleanup_all_tasks(shm_dir: Path):
+def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 7200):
     """
-    Удаляет ВСЕ папки задач при запуске бота.
-    Так как /dev/shm — временное хранилище, при старте бота можно безопасно удалить всё.
-    """
-    if not shm_dir.exists():
-        return
-    
-    deleted = 0
-    for item in shm_dir.iterdir():
-        if item.is_dir() and item.name.startswith("task_"):
-            try:
-                shutil.rmtree(item)
-                deleted += 1
-                logging.info(f"🧹 Удалена папка при старте: {item.name}")
-            except Exception as e:
-                logging.error(f"Ошибка удаления {item}: {e}")
-    
-    if deleted:
-        logging.info(f"🧹 Очищено {deleted} папок при старте")
-
-
-def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
-    """
-    Удаляет папки старше max_age_seconds.
-    Вызывается периодически из фонового процесса.
+    Удаляет папки задач, которые не обновлялись дольше max_age_seconds.
+    Вызывается периодически. Удаление происходит только по времени модификации,
+    но активные задачи теперь регулярно обновляют свой mtime через touch_task().
     """
     if not shm_dir.exists():
         return
-    
+
     current_time = time.time()
     deleted = 0
-    
+
     for item in shm_dir.iterdir():
         if not item.is_dir() or not item.name.startswith("task_"):
             continue
-        
+
         try:
-            # Время последнего изменения папки (обновляется через touch_task)
             mtime = item.stat().st_mtime
             age_seconds = current_time - mtime
-            
+
             if age_seconds > max_age_seconds:
                 shutil.rmtree(item)
                 deleted += 1
@@ -171,20 +149,20 @@ def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
                 logging.info(f"🧹 Удалена старая папка {item.name} ({age_min:.1f} мин)")
         except Exception as e:
             logging.error(f"Ошибка обработки {item}: {e}")
-    
+
     if deleted:
         logging.info(f"🧹 Очищено {deleted} старых папок")
 
 
-async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 3600):
+async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 7200):
     """Асинхронная обёртка для cleanup_old_tasks (не блокирует event loop)."""
     await asyncio.to_thread(cleanup_old_tasks, shm_dir, max_age_seconds)
 
 
-async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
+async def cleanup_loop(shm_dir: Path, interval: int = 300, max_age: int = 7200):
     """
     Фоновый цикл очистки старых задач.
-    Запускается каждые interval секунд.
+    Запускается каждые interval секунд (по умолчанию 5 минут).
     Ошибки не прерывают цикл.
     """
     while True:
@@ -193,7 +171,6 @@ async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
             await cleanup_old_tasks_async(shm_dir, max_age)
         except Exception as e:
             logging.error(f"❌ Ошибка в cleanup_loop: {e}", exc_info=True)
-            # Продолжаем работу
 
 
 # ==========================================
@@ -283,13 +260,13 @@ async def main():
     logging.info(f"💾 RAM-диск: {shm_dir}")
     logging.info(f"📄 Логи: {log_dir}")
 
-    # ✅ 1. Полная очистка при старте (так как /dev/shm — временное хранилище)
-    cleanup_all_tasks(shm_dir)
+    # ✅ Стартовая очистка УДАЛЕНА — теперь только периодическая.
+    # Это предотвращает удаление задач, обрабатываемых другим экземпляром.
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    # ✅ 2. Фоновый процесс очистки старых задач (каждые 10 минут)
-    asyncio.create_task(cleanup_loop(shm_dir, interval=600, max_age=3600))
+    # ✅ Фоновый процесс очистки старых задач (каждые 5 минут, порог 2 часа)
+    asyncio.create_task(cleanup_loop(shm_dir, interval=300, max_age=7200))
 
     logging.info("✅ Бот успешно инициализирован и готов к работе")
 
