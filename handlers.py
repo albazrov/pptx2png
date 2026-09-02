@@ -491,7 +491,19 @@ def create_zip_stream(file_paths: List[Path], output_path: Path) -> Path:
             if fpath.exists():
                 zf.write(fpath, arcname=fpath.name)
     return output_path
+# ==========================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПРИВЕТСТВИЯ
+# ==========================================
 
+async def send_welcome(message: types.Message, get_settings_keyboard):
+    """Отправляет приветственное сообщение с настройками."""
+    await message.reply(
+        "👋 Привет!\n\n"
+        "Для начала работы загрузите презентацию в формате **.pptx**, **.ppt** или **.zip**.\n"
+        "Также можно отправить google ссылку на файл (доступ на чтением всем).\n\n"
+        "⚙️ Настройки качества и PDF:",
+        reply_markup=get_settings_keyboard(message.from_user.id)
+    )
 
 # ==========================================
 # ХЕНДЛЕРЫ (ПОРЯДОК ВАЖЕН!)
@@ -505,8 +517,7 @@ def create_zip_stream(file_paths: List[Path], output_path: Path) -> Path:
 async def cmd_start(message: types.Message, check_access, get_settings_keyboard):
     if not await check_access(message):
         return
-    await message.reply("👋 Привет! Настройте параметры генерации:", reply_markup=get_settings_keyboard(message.from_user.id))
-
+    await send_welcome(message, get_settings_keyboard)
 
 # ==========================================
 # 2. ОБРАБОТЧИК ВЫБОРА СЛАЙДОВ (callback)
@@ -645,10 +656,10 @@ async def handle_text_input(message: types.Message, check_access, get_settings_k
             break
 
     if not active_session:
-        await message.reply(
-            "❌ Нет активного запроса на выбор слайдов.\n"
-            "Сначала загрузите презентацию или нажмите 'Выбрать слайды'."
-        )
+        # Вместо ошибки отправляем приветственное сообщение,
+        # чтобы пользователь понял, что нужно загрузить файл.
+        await send_welcome(message, get_settings_keyboard)
+
         return
 
     ranges = parse_slides_ranges(message.text.strip())
