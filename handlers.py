@@ -1,6 +1,5 @@
-
 # ==========================================
-# handlers.py — ОБРАБОТЧИКИ (полностью исправлен)
+# handlers.py — ОБРАБОТЧИКИ (ФИНАЛЬНАЯ ВЕРСИЯ)
 # ==========================================
 
 import os
@@ -32,11 +31,14 @@ converter_semaphore = asyncio.Semaphore(2)
 
 
 # ==========================================
-# МЕНЕДЖЕР БЛОКИРОВОК ЗАДАЧ (УПРОЩЁННЫЙ)
+# МЕНЕДЖЕР БЛОКИРОВОК ЗАДАЧ
 # ==========================================
 
 class TaskLockManager:
-    """Упрощённый менеджер блокировок для защиты от дублирующих операций."""
+    """
+    Менеджер блокировок для защиты от дублирующих операций.
+    Предотвращает одновременный запуск конвертации и спеллера для одной задачи.
+    """
     
     def __init__(self):
         self._locks: Dict[str, asyncio.Lock] = {}
@@ -231,7 +233,7 @@ def safe_delete_task_dir(task_dir: Path):
 
 
 # ==========================================
-# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ (ИСПРАВЛЕН)
+# КОНТЕКСТНЫЙ МЕНЕДЖЕР ДЛЯ ЗАДАЧИ
 # ==========================================
 
 class TaskContext:
@@ -648,7 +650,7 @@ async def handle_text_input(message: types.Message, check_access, get_settings_k
 
 
 # ==========================================
-# 5. ОБРАБОТЧИК СПЕЛЛЕРА
+# 5. ОБРАБОТЧИК СПЕЛЛЕРА (С БЛОКИРОВКОЙ)
 # ==========================================
 
 @router.callback_query(F.data.startswith("chk_spell:"))
@@ -657,6 +659,11 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
         await callback.answer("❌ Доступ запрещен.", show_alert=True)
         return
     task_id = callback.data.split(":")[-1]
+    
+    # ✅ Захватываем блокировку для спеллера
+    if not await task_lock_manager.acquire(task_id):
+        await callback.answer("⏳ Задача уже обрабатывается.", show_alert=True)
+        return
     
     try:
         task_dir, pptx_path = await _validate_task_ownership(callback, task_id, SHM_DIR)
@@ -704,6 +711,9 @@ async def callback_run_speller(callback: types.CallbackQuery, bot: Bot, SHM_DIR:
     except Exception as e:
         logging.error(f"Ошибка в callback_run_speller: {e}", exc_info=True)
         await callback.answer("❌ Произошла ошибка при проверке.", show_alert=True)
+    finally:
+        # ✅ Освобождаем блокировку после завершения
+        await task_lock_manager.release(task_id)
 
 
 # ==========================================
