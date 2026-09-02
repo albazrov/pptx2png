@@ -1,5 +1,5 @@
-# ==========================================
-# bot.py — ГЛАВНЫЙ ФАЙЛ (исправлен)
+﻿# ==========================================
+# bot.py — ГЛАВНЫЙ ФАЙЛ (REFACTORED)
 # ==========================================
 
 import sys
@@ -18,13 +18,13 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
-from user_manager import UserManager
-from handlers import router, sessions, task_lock_manager
+# Импорты
+try:
+    from user_manager import UserManager
+    from handlers import router, session_manager
+except ImportError:
+    pass
 
-
-# ==========================================
-# 1. НАСТРОЙКА ОКРУЖЕНИЯ
-# ==========================================
 
 def setup_environment():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,173 +32,86 @@ def setup_environment():
 
     parser = argparse.ArgumentParser(description="PPTX2PNG Telegram Bot")
     parser.add_argument("--log-dir", type=str, help="Путь к папке логов")
-    parser.add_argument("--shm-dir", type=str, help="Путь к временной папке в RAM-диске")
+    parser.add_argument("--shm-dir", type=str, help="Путь к RAM-диску")
     args, unknown = parser.parse_known_args()
 
     config_path = Path(script_dir) / "config.ini"
     settings_path = Path(script_dir) / "settings.ini"
 
-    config = configparser.ConfigParser()
-    settings_config = configparser.ConfigParser()
-
     if not config_path.exists():
-        sys.exit(f"❌ Ошибка: Файл секретов config.ini не найден по пути: {config_path}")
+        sys.exit(f"❌ config.ini не найден: {config_path}")
+    
+    config = configparser.ConfigParser()
     config.read(config_path, encoding='utf-8')
 
     try:
         bot_token = config.get("Telegram", "BOT_TOKEN").strip()
         admin_id = int(config.get("Telegram", "ADMIN_ID").strip())
     except Exception as e:
-        sys.exit(f"❌ Ошибка в config.ini: {e}")
+        sys.exit(f"❌ Ошибка конфига: {e}")
 
-    if settings_path.exists():
-        settings_config.read(settings_path, encoding='utf-8')
-
-    if args.shm_dir:
-        shm_dir = Path(args.shm_dir)
-    else:
-        try:
-            base_shm = settings_config.get("Paths", "shm_dir").strip()
-            if not base_shm:
-                raise configparser.NoOptionError("shm_dir", "Paths")
-            shm_dir = Path(base_shm) / env_name
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            shm_dir = Path("/dev/shm/pptx2png_tasks") / env_name
-
+    shm_dir = Path(args.shm_dir) if args.shm_dir else Path("/dev/shm/pptx2png_tasks") / env_name
     shm_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.log_dir:
-        log_dir = args.log_dir
-    else:
-        try:
-            base_log = settings_config.get("Paths", "log_dir").strip()
-            if not base_log:
-                raise configparser.NoOptionError("log_dir", "Paths")
-            log_dir = base_log
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            log_dir = os.path.join(str(shm_dir), "logs")
-
+    log_dir = args.log_dir if args.log_dir else os.path.join(str(shm_dir), "logs")
     os.makedirs(log_dir, exist_ok=True)
 
     return script_dir, env_name, bot_token, admin_id, shm_dir, log_dir
 
 
-# ==========================================
-# 2. НАСТРОЙКА ЛОГИРОВАНИЯ С РОТАЦИЕЙ
-# ==========================================
-
 def setup_logging(log_dir: str):
-    log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
 
-    info_handler = RotatingFileHandler(
-        os.path.join(log_dir, "bot.log"),
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding='utf-8'
-    )
-    info_handler.setLevel(logging.INFO)
-    info_handler.setFormatter(log_formatter)
-    root_logger.addHandler(info_handler)
+    # Info Log
+    fh_info = RotatingFileHandler(os.path.join(log_dir, "bot.log"), maxBytes=10*1024*1024, backupCount=5)
+    fh_info.setFormatter(fmt)
+    fh_info.setLevel(logging.INFO)
+    root.addHandler(fh_info)
 
-    debug_handler = RotatingFileHandler(
-        os.path.join(log_dir, "debug.log"),
-        maxBytes=10 * 1024 * 1024,
-        backupCount=3,
-        encoding='utf-8'
-    )
-    debug_handler.setLevel(logging.DEBUG)
-    debug_handler.setFormatter(log_formatter)
-    root_logger.addHandler(debug_handler)
+    # Debug Log
+    fh_debug = RotatingFileHandler(os.path.join(log_dir, "debug.log"), maxBytes=10*1024*1024, backupCount=3)
+    fh_debug.setFormatter(fmt)
+    fh_debug.setLevel(logging.DEBUG)
+    root.addHandler(fh_debug)
 
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.INFO)
-    stdout_handler.setFormatter(log_formatter)
-    root_logger.addHandler(stdout_handler)
-
-
-# ==========================================
-# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ
-# ==========================================
-
-def cleanup_all_tasks(shm_dir: Path):
-    """
-    Удаляет ВСЕ папки задач при запуске бота.
-    Так как /dev/shm — временное хранилище, при старте бота можно безопасно удалить всё.
-    """
-    if not shm_dir.exists():
-        return
-    
-    deleted = 0
-    for item in shm_dir.iterdir():
-        if item.is_dir() and item.name.startswith("task_"):
-            try:
-                shutil.rmtree(item)
-                deleted += 1
-                logging.info(f"🧹 Удалена папка при старте: {item.name}")
-            except Exception as e:
-                logging.error(f"Ошибка удаления {item}: {e}")
-    
-    if deleted:
-        logging.info(f"🧹 Очищено {deleted} папок при старте")
+    # Console
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    sh.setLevel(logging.INFO)
+    root.addHandler(sh)
 
 
 def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 3600):
-    """
-    Удаляет папки старше max_age_seconds.
-    Вызывается периодически из фонового процесса.
-    """
-    if not shm_dir.exists():
-        return
+    """Фоновая очистка старых задач."""
+    if not shm_dir.exists(): return
     
-    current_time = time.time()
     deleted = 0
+    current_time = time.time()
     
     for item in shm_dir.iterdir():
-        if not item.is_dir() or not item.name.startswith("task_"):
-            continue
-        
-        try:
-            # Время последнего изменения папки (обновляется через touch_task)
-            mtime = item.stat().st_mtime
-            age_seconds = current_time - mtime
-            
-            if age_seconds > max_age_seconds:
-                shutil.rmtree(item)
-                deleted += 1
-                age_min = age_seconds / 60
-                logging.info(f"🧹 Удалена старая папка {item.name} ({age_min:.1f} мин)")
-        except Exception as e:
-            logging.error(f"Ошибка обработки {item}: {e}")
-    
-    if deleted:
-        logging.info(f"🧹 Очищено {deleted} старых папок")
-
-
-async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 3600):
-    """Асинхронная обёртка для cleanup_old_tasks (не блокирует event loop)."""
-    await asyncio.to_thread(cleanup_old_tasks, shm_dir, max_age_seconds)
+        if item.is_dir() and item.name.startswith("task_"):
+            try:
+                age = current_time - item.stat().st_mtime
+                if age > max_age_seconds:
+                    shutil.rmtree(item)
+                    deleted += 1
+            except Exception:
+                pass
+    return deleted
 
 
 async def cleanup_loop(shm_dir: Path, interval: int = 600, max_age: int = 3600):
-    """
-    Фоновый цикл очистки старых задач.
-    Запускается каждые interval секунд.
-    Ошибки не прерывают цикл.
-    """
     while True:
         await asyncio.sleep(interval)
         try:
-            await cleanup_old_tasks_async(shm_dir, max_age)
+            del_count = await asyncio.to_thread(cleanup_old_tasks, shm_dir, max_age)
+            if del_count:
+                logging.info(f"🧹 Cleanup: удалено {del_count} старых папок")
         except Exception as e:
-            logging.error(f"❌ Ошибка в cleanup_loop: {e}", exc_info=True)
-            # Продолжаем работу
+            logging.error(f"Cleanup error: {e}")
 
-
-# ==========================================
-# 4. СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА
-# ==========================================
 
 def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, script_dir: str):
     bot = Bot(token=bot_token)
@@ -209,46 +122,36 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
 
     def get_settings_keyboard(user_id):
         cfg = user_mgr.get_user_config(user_id)
-        q_std = "✅ Standard" if cfg["quality"] == "standard" else "Standard"
-        q_2k = "✅ 2K" if cfg["quality"] == "2k" else "2K"
-        q_4k = "✅ 4K" if cfg["quality"] == "4k" else "4K"
-        pdf_status = "✅ Да (ZIP + PDF)" if cfg["keep_pdf"] else "❌ Нет (Только ZIP)"
-
+        q = cfg.get("quality", "standard")
+        pdf = cfg.get("keep_pdf", False)
+        
         builder = InlineKeyboardBuilder()
         builder.row(
-            InlineKeyboardButton(text=q_std, callback_data="set_q_standard"),
-            InlineKeyboardButton(text=q_2k, callback_data="set_q_2k"),
-            InlineKeyboardButton(text=q_4k, callback_data="set_q_4k")
+            InlineKeyboardButton(text="✅ Standard" if q=="standard" else "Standard", callback_data="set_q_standard"),
+            InlineKeyboardButton(text="✅ 2K" if q=="2k" else "2K", callback_data="set_q_2k"),
+            InlineKeyboardButton(text="✅ 4K" if q=="4k" else "4K", callback_data="set_q_4k")
         )
-        builder.row(InlineKeyboardButton(text=f"Возвращать PDF: {pdf_status}", callback_data="toggle_pdf"))
+        builder.row(InlineKeyboardButton(text=f"PDF: {'Да' if pdf else 'Нет'}", callback_data="toggle_pdf"))
         return builder.as_markup()
 
     async def check_access_by_user(user: types.User, bot: Bot) -> bool:
-        user_id = user.id
-        if user_id in user_mgr.load_allowed_users():
-            return True
-
+        if user.id in user_mgr.load_allowed_users(): return True
+        
         admin_kb = InlineKeyboardBuilder()
         admin_kb.row(
-            InlineKeyboardButton(text="✅ Разрешить", callback_data=f"adm_allow_{user_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_deny_{user_id}")
+            InlineKeyboardButton(text="✅ Да", callback_data=f"adm_allow_{user.id}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data=f"adm_deny_{user.id}")
         )
-
         try:
             await bot.send_message(
-                chat_id=admin_id,
-                text=(
-                    f"🔔 <b>Запрос доступа!</b>\n\n"
-                    f"• <b>Имя:</b> <code>{user.full_name or 'без имени'}</code>\n"
-                    f"• <b>Юзернейм:</b> <code>@{user.username if user.username else 'нет'}</code>\n"
-                    f"• <b>ID:</b> <code>{user_id}</code>"
-                ),
-                parse_mode="HTML",
+                admin_id, 
+                f"🔔 <b>Запрос доступа!</b>\nID: <code>{user.id}</code>", 
+                parse_mode="HTML", 
                 reply_markup=admin_kb.as_markup()
             )
             return False
         except Exception as e:
-            logging.error(f"Ошибка отправки запроса доступа: {e}", exc_info=True)
+            logging.error(f"Admin notify error: {e}")
             return False
 
     async def check_access(message: types.Message) -> bool:
@@ -260,7 +163,6 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
         "check_access": check_access,
         "check_access_by_user": check_access_by_user,
         "get_settings_keyboard": get_settings_keyboard,
-        "http_session": http_session,
         "bot": bot,
         "ADMIN_ID": admin_id
     })
@@ -269,57 +171,32 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
     return bot, dp, user_mgr, http_session
 
 
-# ==========================================
-# 5. ГЛАВНАЯ ФУНКЦИЯ
-# ==========================================
-
 async def main():
-    logging.info("🚀 Запуск PPTX2PNG Telegram Bot...")
-
+    logging.info("🚀 Starting PPTX2PNG Bot...")
+    
     script_dir, env_name, bot_token, admin_id, shm_dir, log_dir = setup_environment()
     setup_logging(log_dir)
 
-    logging.info(f"📁 Окружение: {env_name}")
-    logging.info(f"💾 RAM-диск: {shm_dir}")
-    logging.info(f"📄 Логи: {log_dir}")
-
-    # ✅ 1. Полная очистка при старте (так как /dev/shm — временное хранилище)
-    cleanup_all_tasks(shm_dir)
+    logging.info(f"Env: {env_name}, SHM: {shm_dir}")
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    # ✅ 2. Фоновый процесс очистки старых задач (каждые 10 минут)
-    asyncio.create_task(cleanup_loop(shm_dir, interval=600, max_age=3600))
+    # Запуск фонового уборщика вместо агрессивного старта
+    asyncio.create_task(cleanup_loop(shm_dir))
 
-    logging.info("✅ Бот успешно инициализирован и готов к работе")
-
+    logging.info("✅ Ready.")
     try:
         await dp.start_polling(bot)
-    except asyncio.CancelledError:
-        logging.info("⏹️ Поллинг остановлен по запросу")
-        raise
     except KeyboardInterrupt:
-        logging.info("⏹️ Бот остановлен пользователем")
-        raise
-    except Exception as e:
-        logging.error(f"❌ Критическая ошибка в поллинге: {e}", exc_info=True)
-        raise
+        logging.info("Stopped.")
     finally:
         await http_session.close()
         await bot.session.close()
-        logging.info("✅ Бот завершил работу")
 
-
-# ==========================================
-# 6. ТОЧКА ВХОДА
-# ==========================================
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("👋 Завершение работы по запросу пользователя")
-        sys.exit(0)
     except Exception as e:
-        logging.error(f"❌ Необработанная ошибка: {e}", exc_info=True)
+        logging.critical(f"FATAL: {e}", exc_info=True)
         sys.exit(1)
