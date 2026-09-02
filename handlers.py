@@ -697,13 +697,28 @@ async def run_conversion(
         await session_manager.pop(task_id)
         safe_delete_task_dir(task_dir)
 
-
 async def convert_all_pngs(pptx_path: Path, output_dir: Path, quality: str) -> List[Path]:
-    def _sync_work():
-        # Здесь ваша логика синтеза из оригинального кода
-        # ...
-        return [] # Placeholder
-    return await asyncio.to_thread(_sync_work)
+    def _sync_convert():
+        if pptx_path.suffix.lower() == '.ppt':
+            pptx_converted = converter_engine.ppt_to_pptx_crossplatform(pptx_path, output_dir)
+        else:
+            pptx_converted = pptx_path
+            
+        temp_dark_pptx = output_dir / f"temp_dark_{pptx_converted.name}"
+        make_dark_mode(pptx_converted, temp_dark_pptx)
+        
+        pdf_path = converter_engine.pptx_to_pdf_crossplatform(temp_dark_pptx, output_dir)
+        total_slides, png_paths = converter_engine.pdf_to_png_fast(pdf_path, output_dir, quality)
+        
+        if pdf_path.exists():
+            pdf_path.unlink()
+        if temp_dark_pptx.exists():
+            temp_dark_pptx.unlink()
+        if pptx_converted != pptx_path and pptx_converted.exists():
+            pptx_converted.unlink()
+            
+        return png_paths
+    return await asyncio.to_thread(_sync_convert)
 
 
 async def create_zip_async(file_paths: List[Path], output_path: Path) -> Path:
