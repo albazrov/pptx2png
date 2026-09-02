@@ -1,4 +1,4 @@
-﻿# ==========================================
+﻿﻿# ==========================================
 # handlers.py — ОБРАБОТЧИКИ (ФИНАЛЬНАЯ ВЕРСИЯ, ИСПРАВЛЕННАЯ)
 # ==========================================
 
@@ -74,6 +74,12 @@ class TaskLockManager:
                 if lock.locked():
                     lock.release()
                 self._locks.pop(task_id, None)
+
+
+    async def is_active(self, task_id: str) -> bool:
+        """Проверяет, активна ли задача (есть ли активная блокировка)."""
+        async with self._dict_lock:
+            return task_id in self._active
 
 
 task_lock_manager = TaskLockManager()
@@ -323,6 +329,9 @@ async def run_conversion(
                 user_id = callback.from_user.id
                 pptx_path = ctx.pptx_path
 
+                # Обновляем время активности перед началом длительных операций
+                touch_task(ctx.task_dir)
+
                 if all_slides:
                     expected_zip, final_pdf_path = await core_pipeline(pptx_path, callback.message, user_id, user_mgr)
                     
@@ -351,6 +360,9 @@ async def run_conversion(
                     temp_png_dir = ctx.task_dir / "temp_pngs"
                     temp_png_dir.mkdir(exist_ok=True)
                     
+                    # Обновляем время перед конвертацией PNG
+                    touch_task(ctx.task_dir)
+
                     all_pngs = await convert_all_pngs(pptx_path, temp_png_dir, cfg["quality"])
                     if not all_pngs:
                         await callback.message.edit_text("❌ Не удалось конвертировать слайды в PNG.")
@@ -377,6 +389,9 @@ async def run_conversion(
                         zip_path = ctx.task_dir / f"{pptx_path.stem}_part{idx + 1}_{range_name}.zip"
                         
                         create_zip_stream(selected, zip_path)
+                        
+                        # Обновляем время после создания каждого архива
+                        touch_task(ctx.task_dir)
 
                         if zip_path.stat().st_size > 45 * 1024 * 1024:
                             zip_path.unlink()
@@ -396,8 +411,15 @@ async def run_conversion(
                         await callback.message.edit_text(f"📤 Отправляю {len(archives)} архив(ов)...")
                         for zip_path in archives:
                             if zip_path.exists():
-                                await callback.bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=f"📦 {zip_path.name}")
+                                await callback.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=FSInputFile(zip_path),
+                                    caption=f"📦 {zip_path.name}"
+                                )
                                 zip_path.unlink()
+                                
+                                # Обновляем время после отправки каждого архива
+                                touch_task(ctx.task_dir)
                         await callback.message.delete()
                         await callback.bot.send_message(
                             chat_id=chat_id,
