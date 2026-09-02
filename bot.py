@@ -119,14 +119,13 @@ def setup_logging(log_dir: str):
 
 
 # ==========================================
-# 3. ОЧИСТКА СТАРЫХ ЗАДАЧ (периодическая)
+# 3. АСИНХРОННАЯ ОЧИСТКА С ПРОВЕРКОЙ АКТИВНОСТИ
 # ==========================================
 
-def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 7200):
+async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 7200):
     """
-    Удаляет папки задач, которые не обновлялись дольше max_age_seconds.
-    Вызывается периодически. Удаление происходит только по времени модификации,
-    но активные задачи теперь регулярно обновляют свой mtime через touch_task().
+    Удаляет папки задач, которые не обновлялись дольше max_age_seconds
+    И НЕ являются активными (не захвачены блокировкой).
     """
     if not shm_dir.exists():
         return
@@ -138,12 +137,18 @@ def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 7200):
         if not item.is_dir() or not item.name.startswith("task_"):
             continue
 
+        task_id = item.name
+
+        # Проверяем, активна ли задача (захвачена ли блокировка)
+        if await task_lock_manager.is_active(task_id):
+            continue  # не удаляем активную задачу
+
         try:
             mtime = item.stat().st_mtime
             age_seconds = current_time - mtime
 
             if age_seconds > max_age_seconds:
-                shutil.rmtree(item)
+                await asyncio.to_thread(shutil.rmtree, item)
                 deleted += 1
                 age_min = age_seconds / 60
                 logging.info(f"🧹 Удалена старая папка {item.name} ({age_min:.1f} мин)")
@@ -152,11 +157,6 @@ def cleanup_old_tasks(shm_dir: Path, max_age_seconds: int = 7200):
 
     if deleted:
         logging.info(f"🧹 Очищено {deleted} старых папок")
-
-
-async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 7200):
-    """Асинхронная обёртка для cleanup_old_tasks (не блокирует event loop)."""
-    await asyncio.to_thread(cleanup_old_tasks, shm_dir, max_age_seconds)
 
 
 async def cleanup_loop(shm_dir: Path, interval: int = 300, max_age: int = 7200):
