@@ -1,3 +1,7 @@
+# ==========================================
+# bot.py — ГЛАВНЫЙ ЗАПУСКНОЙ СКРИПТ (исправлен)
+# ==========================================
+
 import sys
 import os
 import logging
@@ -5,16 +9,15 @@ import asyncio
 import shutil
 import configparser
 import argparse
+import time
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, InlineKeyboardButton
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
-import converter_engine
 from user_manager import UserManager
 from handlers import router, sessions, task_lock_manager
 
@@ -115,15 +118,63 @@ def setup_logging(log_dir: str):
     root_logger.addHandler(stdout_handler)
 
 
-def escape_markdown(text: str) -> str:
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
+# ==========================================
+# 3. АСИНХРОННАЯ ОЧИСТКА С ПРОВЕРКОЙ АКТИВНОСТИ
+# ==========================================
+
+async def cleanup_old_tasks_async(shm_dir: Path, max_age_seconds: int = 7200):
+    """
+    Удаляет папки задач, которые не обновлялись дольше max_age_seconds
+    И НЕ являются активными (не захвачены блокировкой).
+    """
+    if not shm_dir.exists():
+        return
+
+    current_time = time.time()
+    deleted = 0
+
+    for item in shm_dir.iterdir():
+        if not item.is_dir() or not item.name.startswith("task_"):
+            continue
+
+        task_id = item.name
+
+        # Проверяем, активна ли задача (захвачена ли блокировка)
+        if await task_lock_manager.is_active(task_id):
+            continue  # не удаляем активную задачу
+
+        try:
+            mtime = item.stat().st_mtime
+            age_seconds = current_time - mtime
+
+            if age_seconds > max_age_seconds:
+                await asyncio.to_thread(shutil.rmtree, item)
+                deleted += 1
+                age_min = age_seconds / 60
+                logging.info(f"🧹 Удалена старая папка {item.name} ({age_min:.1f} мин)")
+        except Exception as e:
+            logging.error(f"Ошибка обработки {item}: {e}")
+
+    if deleted:
+        logging.info(f"🧹 Очищено {deleted} старых папок")
+
+
+async def cleanup_loop(shm_dir: Path, interval: int = 300, max_age: int = 7200):
+    """
+    Фоновый цикл очистки старых задач.
+    Запускается каждые interval секунд (по умолчанию 5 минут).
+    Ошибки не прерывают цикл.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await cleanup_old_tasks_async(shm_dir, max_age)
+        except Exception as e:
+            logging.error(f"❌ Ошибка в cleanup_loop: {e}", exc_info=True)
 
 
 # ==========================================
-# 3. СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА
+# 4. СОЗДАНИЕ БОТА И ДИСПЕТЧЕРА
 # ==========================================
 
 def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, script_dir: str):
@@ -196,23 +247,26 @@ def create_bot_and_dispatcher(bot_token: str, admin_id: int, shm_dir: Path, scri
 
 
 # ==========================================
-# 4. ГЛАВНАЯ ФУНКЦИЯ
+# 5. ГЛАВНАЯ ФУНКЦИЯ
 # ==========================================
 
 async def main():
-    logging.info("Запуск PPTX2PNG Telegram Bot...")
+    logging.info("🚀 Запуск PPTX2PNG Telegram Bot...")
 
     script_dir, env_name, bot_token, admin_id, shm_dir, log_dir = setup_environment()
     setup_logging(log_dir)
 
-    logging.info(f"Окружение: {env_name}")
-    logging.info(f"RAM-диск: {shm_dir}")
-    logging.info(f"Логи: {log_dir}")
+    logging.info(f"📁 Окружение: {env_name}")
+    logging.info(f"💾 RAM-диск: {shm_dir}")
+    logging.info(f"📄 Логи: {log_dir}")
+
+    # ✅ Стартовая очистка УДАЛЕНА — теперь только периодическая.
+    # Это предотвращает удаление задач, обрабатываемых другим экземпляром.
 
     bot, dp, user_mgr, http_session = create_bot_and_dispatcher(bot_token, admin_id, shm_dir, script_dir)
 
-    # ✅ Фоновая очистка с увеличенным интервалом и проверкой активных операций
-    asyncio.create_task(task_lock_manager.cleanup_loop(interval=600, max_age=7200))
+    # ✅ Фоновый процесс очистки старых задач (каждые 5 минут, порог 2 часа)
+    asyncio.create_task(cleanup_loop(shm_dir, interval=300, max_age=7200))
 
     logging.info("✅ Бот успешно инициализирован и готов к работе")
 
@@ -234,7 +288,7 @@ async def main():
 
 
 # ==========================================
-# 5. ТОЧКА ВХОДА
+# 6. ТОЧКА ВХОДА
 # ==========================================
 
 if __name__ == "__main__":
