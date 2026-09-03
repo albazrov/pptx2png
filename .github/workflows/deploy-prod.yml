@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: prod-deployment
+  cancel-in-progress: true
+
 jobs:
   deploy-prod:
     runs-on: [self-hosted, raspberry]
@@ -18,17 +22,14 @@ jobs:
 
       - name: Deploy to Production
         run: |
-          # 1. Синхронизируем код в папку prod/
           rsync -av --delete --exclude='.git*' --exclude='config*' --exclude='allowed_users*' --exclude='user_settings*' --exclude='.run_state*' ./ /home/pi/app/pptx2png/prod/
 
           cd /home/pi/app/pptx2png/prod/
           chmod +x manage.sh
 
-          # 2. Останавливаем старый продакшн-бот
           echo "⏹️ Остановка старого продакшн-бота..."
           ./manage.sh stop
 
-          # 3. Запускаем новый продакшн-бот
           echo "🚀 Запуск продакшн-бота через manage.sh..."
           export RUNNER_TRACKING_ID=0
           nohup ./manage.sh start
