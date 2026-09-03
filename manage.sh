@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20260903 - улучшенная версия с PID-файлом и проверкой времени старта
+# 20260903 - улучшенная версия с PID-файлом, проверкой времени старта и состоянием процесса
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 BOT_SCRIPT="bot.py"
@@ -48,7 +48,15 @@ get_process_starttime() {
 }
 
 # --------------------------------------------
-# Проверка, что процесс с данным PID и starttime существует
+# Функция получения состояния процесса (R, S, Z, T и т.д.)
+# --------------------------------------------
+get_process_state() {
+    local pid=$1
+    ps -o state= -p "$pid" 2>/dev/null
+}
+
+# --------------------------------------------
+# Проверка, что процесс с данным PID и starttime существует и не является зомби
 # --------------------------------------------
 is_valid_process() {
     local pid=$1
@@ -57,7 +65,15 @@ is_valid_process() {
     if [ -z "$current_starttime" ]; then
         return 1
     fi
-    [ "$current_starttime" == "$saved_starttime" ]
+    # Проверяем, что starttime совпадает
+    [ "$current_starttime" != "$saved_starttime" ] && return 1
+
+    # Проверяем состояние процесса (не должен быть зомби)
+    local state=$(get_process_state "$pid")
+    if [ -z "$state" ] || [ "$state" == "Z" ]; then
+        return 1
+    fi
+    return 0
 }
 
 # --------------------------------------------
@@ -70,30 +86,25 @@ kill_with_wait() {
     local name=${4:-"процесс"}
 
     if ! is_valid_process "$pid" "$expected_starttime"; then
-        echo "⚠️ Процесс $pid не соответствует ожидаемому (starttime не совпадает). Пропускаем."
+        echo "⚠️ Процесс $pid не соответствует ожидаемому (starttime не совпадает или зомби). Пропускаем."
         return 0   # Возвращаем 0, т.к. процесс уже не тот, которого мы ждали
-    fi
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        echo "ℹ️ $name (PID $pid) уже не активен"
-        return 0
     fi
 
     echo "⏳ Остановка $name (PID $pid)..."
     kill "$pid"
 
     local waited=0
-    while kill -0 "$pid" 2>/dev/null; do
+    while is_valid_process "$pid" "$expected_starttime"; do
         if [ $waited -ge $timeout ]; then
             echo "⚠️ $name не завершился за ${timeout}с, принудительно завершаем..."
             kill -9 "$pid"
             # Ждём до 5 секунд после SIGKILL
             local kill_waited=0
-            while kill -0 "$pid" 2>/dev/null && [ $kill_waited -lt 5 ]; do
+            while is_valid_process "$pid" "$expected_starttime" && [ $kill_waited -lt 5 ]; do
                 sleep 1
                 kill_waited=$((kill_waited + 1))
             done
-            if kill -0 "$pid" 2>/dev/null; then
+            if is_valid_process "$pid" "$expected_starttime"; then
                 echo "❌ Не удалось завершить $name (PID $pid)"
                 return 1
             else
@@ -110,17 +121,14 @@ kill_with_wait() {
 }
 
 # --------------------------------------------
-# Остановка одного legacy-процесса по PID
-# Использует starttime для идентификации
+# Остановка одного legacy-процесса по PID с проверкой starttime и состояния
 # --------------------------------------------
 stop_legacy_process() {
     local pid=$1
     local name=${2:-"legacy-процесс"}
 
-    # Получаем текущий starttime процесса
     local original_starttime=$(get_process_starttime "$pid")
     if [ -z "$original_starttime" ]; then
-        # Процесс уже мёртв
         echo "ℹ️ $name (PID $pid) уже не активен"
         return 0
     fi
@@ -133,8 +141,9 @@ stop_legacy_process() {
     # Ждём до 5 секунд для graceful завершения
     local waited=0
     while [ $waited -lt 5 ]; do
+        # Проверяем, жив ли процесс с тем же starttime и не зомби ли он
         if ! is_valid_process "$pid" "$original_starttime"; then
-            echo "✅ $name (PID $pid) завершён (starttime изменился или процесс мёртв)"
+            echo "✅ $name (PID $pid) завершён"
             return 0
         fi
         sleep 1
@@ -166,7 +175,6 @@ stop_legacy_process() {
             return 0
         fi
     else
-        # Процесс завершился в процессе ожидания (starttime изменился)
         echo "✅ $name (PID $pid) завершён"
         return 0
     fi
@@ -223,7 +231,6 @@ cmd_start() {
 # --------------------------------------------
 cmd_stop() {
     echo "🛑 Остановка бота ($ENV_NAME)..."
-    local stop_success=0
 
     # 1. Остановка по PID-файлу
     if [ -f "$PID_FILE" ]; then
@@ -239,7 +246,7 @@ cmd_stop() {
                     return 1
                 fi
             else
-                echo "⚠️ PID-файл есть, но процесс $saved_pid не соответствует сохранённому starttime. Удаляем файл."
+                echo "⚠️ PID-файл есть, но процесс $saved_pid не соответствует сохранённому starttime или стал зомби. Удаляем файл."
                 rm -f "$PID_FILE"
             fi
         else
@@ -264,7 +271,7 @@ cmd_stop() {
             # Проверяем, что процесс действительно принадлежит этому проекту
             local cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
             if [[ "$cmdline" == *"$PROJECT_DIR/$BOT_SCRIPT"* ]]; then
-                # Останавливаем legacy-процесс с проверкой starttime
+                # Останавливаем legacy-процесс с проверкой starttime и состояния
                 stop_legacy_process "$pid" "legacy-процесс $pid"
                 if [ $? -ne 0 ]; then
                     echo "❌ Не удалось остановить legacy-процесс $pid"
@@ -278,7 +285,7 @@ cmd_stop() {
         echo "ℹ️ Legacy-процессы не найдены"
     fi
 
-    # Удаляем PID-файл, если он ещё существует (на случай, если он остался)
+    # Удаляем PID-файл, если он ещё существует
     rm -f "$PID_FILE"
     echo "✅ Все процессы остановлены"
     return 0
@@ -311,7 +318,7 @@ cmd_status() {
             echo "📊 RAM: $SHM_DIR"
             return 0
         else
-            echo "🔴 Бот ОСТАНОВЛЕН (PID-файл есть, но процесс не соответствует или мёртв) [$ENV_NAME]"
+            echo "🔴 Бот ОСТАНОВЛЕН (PID-файл есть, но процесс не соответствует, мёртв или стал зомби) [$ENV_NAME]"
             rm -f "$PID_FILE"
             return 1
         fi
