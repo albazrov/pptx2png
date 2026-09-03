@@ -18,13 +18,14 @@ jobs:
 
       - name: Deploy and Test on Test Branch
         run: |
-          # 1. Синхронизируем код, исключая локальные конфиги, вайтлисты и сессии пользователей
-          rsync -av --exclude='.git*' --exclude='config*' --exclude='allowed_users*' --exclude='user_settings*' ./ /home/pi/app/pptx2png/test/
+          # 1. Синхронизируем код, исключая локальные конфиги, вайтлисты и runtime-файлы
+          rsync -av --exclude='.git*' --exclude='config*' --exclude='allowed_users*' --exclude='user_settings*' --exclude='.run_state*' ./ /home/pi/app/pptx2png/test/
 
           cd /home/pi/app/pptx2png/test/
           chmod +x manage.sh
 
           # 2. Останавливаем старую тестовую копию перед деплоем нового кода
+          echo "⏹️ Остановка старого бота..."
           ./manage.sh stop || true
 
           # 3. Запускаем бота, отвязывая дескрипторы от сессии GitHub Runner
@@ -35,6 +36,7 @@ jobs:
       - name: Verify bot is running
         run: |
           sleep 5
+          cd /home/pi/app/pptx2png/test/
           if pgrep -f "python.*bot.py" > /dev/null; then
             echo "✅ Бот успешно запущен"
           else
