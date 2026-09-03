@@ -37,7 +37,6 @@ EXTRA_ARGS=(
 
 # --------------------------------------------
 # Функция получения времени старта процесса (в тиках)
-# Используется для проверки, что PID принадлежит именно нашему процессу
 # --------------------------------------------
 get_process_starttime() {
     local pid=$1
@@ -45,12 +44,11 @@ get_process_starttime() {
         echo ""
         return 1
     fi
-    # Поле 22 в /proc/$pid/stat — это starttime в тиках с момента загрузки системы
     awk '{print $22}' "/proc/$pid/stat" 2>/dev/null
 }
 
 # --------------------------------------------
-# Функция проверки, что процесс с данным PID и starttime существует
+# Проверка, что процесс с данным PID и starttime существует
 # --------------------------------------------
 is_valid_process() {
     local pid=$1
@@ -63,9 +61,7 @@ is_valid_process() {
 }
 
 # --------------------------------------------
-# Функция: убить процесс с ожиданием, если он соответствует сохранённому starttime
-# Параметры: PID, starttime, таймаут (секунды), имя процесса (для лога)
-# Возвращает 0 при успешном завершении, 1 при ошибке
+# Убить процесс с ожиданием, если он соответствует сохранённому starttime
 # --------------------------------------------
 kill_with_wait() {
     local pid=$1
@@ -73,7 +69,6 @@ kill_with_wait() {
     local timeout=${3:-10}
     local name=${4:-"процесс"}
 
-    # Проверяем, что процесс соответствует ожидаемому
     if ! is_valid_process "$pid" "$expected_starttime"; then
         echo "⚠️ Процесс $pid не соответствует ожидаемому (starttime не совпадает). Пропускаем."
         return 1
@@ -92,7 +87,12 @@ kill_with_wait() {
         if [ $waited -ge $timeout ]; then
             echo "⚠️ $name не завершился за ${timeout}с, принудительно завершаем..."
             kill -9 "$pid"
-            sleep 1
+            # Ждём ещё до 5 секунд после SIGKILL
+            local kill_waited=0
+            while kill -0 "$pid" 2>/dev/null && [ $kill_waited -lt 5 ]; do
+                sleep 1
+                kill_waited=$((kill_waited + 1))
+            done
             if kill -0 "$pid" 2>/dev/null; then
                 echo "❌ Не удалось завершить $name (PID $pid)"
                 return 1
@@ -118,7 +118,6 @@ cmd_start() {
     chmod 775 "$SHM_DIR" 2>/dev/null || true
     chmod 775 "$LOG_DIR" 2>/dev/null || true
 
-    # Проверяем, не запущен ли уже бот (по PID-файлу)
     if [ -f "$PID_FILE" ]; then
         local saved_pid=$(cut -d: -f1 "$PID_FILE" 2>/dev/null)
         local saved_starttime=$(cut -d: -f2 "$PID_FILE" 2>/dev/null)
@@ -126,16 +125,14 @@ cmd_start() {
             echo "⚠️ Бот уже запущен (PID $saved_pid)!"
             exit 1
         else
-            echo "⚠️ Найден устаревший PID-файл (процесс не соответствует). Удаляем."
+            echo "⚠️ Найден устаревший PID-файл. Удаляем."
             rm -f "$PID_FILE"
         fi
     fi
 
-    # Запускаем бота
     nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" "${EXTRA_ARGS[@]}" > "$NOHUP_LOG" 2>&1 &
     local new_pid=$!
 
-    # Получаем время старта нового процесса
     sleep 0.5
     local new_starttime=$(get_process_starttime "$new_pid")
     if [ -z "$new_starttime" ]; then
@@ -190,34 +187,49 @@ cmd_stop() {
     fi
 
     # 2. Поиск и остановка legacy-процессов (запущенных без PID-файла)
-    # Ищем все процессы python, запускающие bot.py из этой директории
     local legacy_pids=$(pgrep -f "python.*$PROJECT_DIR/$BOT_SCRIPT" 2>/dev/null)
     if [ -n "$legacy_pids" ]; then
         echo "🔍 Найдены legacy-процессы: $legacy_pids"
         for pid in $legacy_pids; do
-            # Пропускаем процесс, если он уже был остановлен (или если он совпадает с PID из файла, который мы уже обработали)
+            # Пропускаем, если процесс уже обработан через PID-файл
             if [ -f "$PID_FILE" ]; then
                 local file_pid=$(cut -d: -f1 "$PID_FILE" 2>/dev/null)
                 if [ "$pid" == "$file_pid" ]; then
                     continue
                 fi
             fi
-            # Для legacy не знаем starttime, поэтому просто пытаемся убить, но с проверкой, что процесс действительно наш (по пути)
-            # Проверяем, что процесс запущен из нашего каталога
+
             local cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
             if [[ "$cmdline" == *"$PROJECT_DIR/$BOT_SCRIPT"* ]]; then
                 echo "⏳ Остановка legacy-процесса $pid..."
                 kill "$pid"
-                sleep 2
+
+                # Ждём до 3 секунд для graceful завершения
+                local waited=0
+                while kill -0 "$pid" 2>/dev/null && [ $waited -lt 3 ]; do
+                    sleep 1
+                    waited=$((waited + 1))
+                done
+
                 if kill -0 "$pid" 2>/dev/null; then
+                    echo "⚠️ Процесс $pid не завершился gracefully, принудительно завершаем..."
                     kill -9 "$pid"
-                fi
-                # Проверяем, что процесс завершился
-                if ! kill -0 "$pid" 2>/dev/null; then
-                    echo "✅ Legacy-процесс $pid остановлен"
+
+                    # Ждём до 5 секунд после SIGKILL
+                    local kill_waited=0
+                    while kill -0 "$pid" 2>/dev/null && [ $kill_waited -lt 5 ]; do
+                        sleep 1
+                        kill_waited=$((kill_waited + 1))
+                    done
+
+                    if kill -0 "$pid" 2>/dev/null; then
+                        echo "❌ Не удалось завершить процесс $pid даже после SIGKILL"
+                        return 1
+                    else
+                        echo "✅ Legacy-процесс $pid принудительно завершён"
+                    fi
                 else
-                    echo "❌ Не удалось остановить legacy-процесс $pid"
-                    return 1
+                    echo "✅ Legacy-процесс $pid завершён gracefully"
                 fi
             else
                 echo "ℹ️ Процесс $pid не относится к этому боту (пропускаем)."
@@ -227,7 +239,6 @@ cmd_stop() {
         echo "ℹ️ Legacy-процессы не найдены"
     fi
 
-    # Если дошли сюда, всё остановлено
     rm -f "$PID_FILE"
     echo "✅ Все процессы остановлены"
     return 0
@@ -252,7 +263,6 @@ cmd_restart() {
 # Команда status
 # --------------------------------------------
 cmd_status() {
-    # Проверяем по PID-файлу
     if [ -f "$PID_FILE" ]; then
         local saved_pid=$(cut -d: -f1 "$PID_FILE" 2>/dev/null)
         local saved_starttime=$(cut -d: -f2 "$PID_FILE" 2>/dev/null)
@@ -266,7 +276,6 @@ cmd_status() {
             return 1
         fi
     else
-        # Проверяем, не запущен ли legacy процесс без PID-файла
         local legacy_pid=$(pgrep -f "python.*$PROJECT_DIR/$BOT_SCRIPT" 2>/dev/null | head -n 1)
         if [ -n "$legacy_pid" ]; then
             echo "⚠️ Найден legacy-процесс (PID: $legacy_pid) без PID-файла. Рекомендуется выполнить 'stop'."
