@@ -103,6 +103,7 @@ def pdf_to_png_fast(pdf_path, output_dir, quality):
     return total_pages, created_files
 
 def extract_zip_if_needed(zip_path, extract_dir):
+    """Распаковывает ZIP архив и ищет в нём файл презентации."""
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_dir)
     for ext in ("*.pptx", "*.PPTX", "*.ppt", "*.PPT"):
@@ -111,7 +112,6 @@ def extract_zip_if_needed(zip_path, extract_dir):
                 return file
     return None
 
-#--
 def convert_to_direct_download(url: str) -> str:
     """Преобразует ссылки Google Drive/Slides в точную ссылку на скачивание."""
     url = url.strip()
@@ -138,14 +138,18 @@ def convert_to_direct_download(url: str) -> str:
         
     return url
 
-#==
 def process_file_local(pptx_path, args):
-    """Синхронное ядро обработки (бывший метод из convert.py)."""
+    """
+    Синхронное ядро обработки (бывший метод из convert.py).
+    Возвращает путь к созданному ZIP-архиву.
+    """
     file_output_dir = Path(args.output_dir) / f"{pptx_path.stem}_output"
     file_output_dir.mkdir(parents=True, exist_ok=True)
     
     current_pptx = pptx_path
     temp_dark_pptx = None
+    zip_path = None
+    
     try:
         if args.dark_mode:
             temp_dark_pptx = file_output_dir / f"temp_dark_{pptx_path.name}"
@@ -156,6 +160,7 @@ def process_file_local(pptx_path, args):
         total_slides, generated_pngs = pdf_to_png_fast(pdf_path, file_output_dir, args.quality)
         
         if args.zip:
+            # Создаём ZIP архив с строго определённым именем
             zip_path = Path(args.output_dir) / f"{pptx_path.stem}_output.zip"
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for file in generated_pngs:
@@ -165,7 +170,12 @@ def process_file_local(pptx_path, args):
             pdf_path.unlink()
         if temp_dark_pptx and temp_dark_pptx.exists():
             temp_dark_pptx.unlink()
+        
+        # Возвращаем путь к созданному ZIP-архиву
+        return zip_path
             
     except Exception as e:
+        # Если произошла ошибка, чистим временные файлы
+        if temp_dark_pptx and temp_dark_pptx.exists():
+            temp_dark_pptx.unlink()
         raise e
-

@@ -1,14 +1,19 @@
-# Секреты и конфигурация
-allowed_users*
-config*
+# Секреты (строго локальные, никогда не попадут на GitHub)
+config.ini
+allowed_users.txt
+user_settings.json
 
-# Логи работы скриптов
-bot.log
+# Логи работы скриптов (живут в оперативной памяти SHM)
 *.log
+bot.log
+debug.log
 nohup.out
-!debug.log
+logs/
+sys_nohup.log
 
-# Окружение и системные файлы
+# Окружение, кэш и системные файлы
+.venv/
+venv/
 __pycache__/
 *.pyc
 .DS_Store
