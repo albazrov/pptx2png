@@ -19,7 +19,9 @@ jobs:
       - name: Deploy and Test on Test Branch
         run: |
           # 1. Синхронизируем код, исключая локальные конфиги, вайтлисты и runtime-файлы
-          rsync -av --exclude='.git*' --exclude='config*' --exclude='allowed_users*' --exclude='user_settings*' --exclude='.run_state*' ./ /home/pi/app/pptx2png/test/
+          # --delete удаляет файлы в целевой директории, которых нет в источнике,
+          # но исключенные файлы (config*, allowed_users*, user_settings*, .run_state*) остаются нетронутыми.
+          rsync -av --delete --exclude='.git*' --exclude='config*' --exclude='allowed_users*' --exclude='user_settings*' --exclude='.run_state*' ./ /home/pi/app/pptx2png/test/
 
           cd /home/pi/app/pptx2png/test/
           chmod +x manage.sh
