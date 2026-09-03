@@ -28,7 +28,7 @@ jobs:
 
           # 2. Останавливаем старую тестовую копию перед деплоем нового кода
           echo "⏹️ Остановка старого бота..."
-          ./manage.sh stop || true
+          ./manage.sh stop   # теперь ждёт завершения и возвращает ошибку при неудаче
 
           # 3. Запускаем бота, отвязывая дескрипторы от сессии GitHub Runner
           echo "🚀 Запуск тестового бота через manage.sh..."
@@ -37,9 +37,8 @@ jobs:
 
       - name: Verify bot is running
         run: |
-          sleep 5
           cd /home/pi/app/pptx2png/test/
-          if pgrep -f "python.*bot.py" > /dev/null; then
+          if ./manage.sh status; then
             echo "✅ Бот успешно запущен"
           else
             echo "❌ Бот не запущен, проверьте логи"
