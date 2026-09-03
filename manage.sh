@@ -1,5 +1,5 @@
 #!/bin/bash
-# 20260903 - улучшенная версия с PID-файлом, проверкой времени старта и состоянием процесса
+# 20260903 - улучшенная версия с PID-файлом, проверкой starttime, состояния и защитой от дублей
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE}")" && pwd)"
 BOT_SCRIPT="bot.py"
@@ -74,6 +74,16 @@ is_valid_process() {
         return 1
     fi
     return 0
+}
+
+# --------------------------------------------
+# Проверка, что процесс жив и не зомби (без проверки starttime)
+# Используется для обнаружения legacy-процессов
+# --------------------------------------------
+is_process_alive_and_running() {
+    local pid=$1
+    local state=$(get_process_state "$pid")
+    [ -n "$state" ] && [ "$state" != "Z" ]
 }
 
 # --------------------------------------------
@@ -189,6 +199,7 @@ cmd_start() {
     chmod 775 "$SHM_DIR" 2>/dev/null || true
     chmod 775 "$LOG_DIR" 2>/dev/null || true
 
+    # 1. Проверка по PID-файлу
     if [ -f "$PID_FILE" ]; then
         local saved_pid=$(cut -d: -f1 "$PID_FILE" 2>/dev/null)
         local saved_starttime=$(cut -d: -f2 "$PID_FILE" 2>/dev/null)
@@ -201,6 +212,25 @@ cmd_start() {
         fi
     fi
 
+    # 2. Проверка legacy-процессов (запущенных без PID-файла)
+    local legacy_pids=$(pgrep -f "python.*$PROJECT_DIR/$BOT_SCRIPT" 2>/dev/null)
+    if [ -n "$legacy_pids" ]; then
+        for pid in $legacy_pids; do
+            # Проверяем, что процесс действительно из этого проекта
+            local cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+            if [[ "$cmdline" == *"$PROJECT_DIR/$BOT_SCRIPT"* ]]; then
+                # Проверяем, что процесс живой (не зомби)
+                if is_process_alive_and_running "$pid"; then
+                    echo "⚠️ Найден активный legacy-процесс (PID $pid). Сначала выполните stop."
+                    exit 1
+                else
+                    echo "ℹ️ Найден legacy-процесс (PID $pid), но он мёртв или зомби. Игнорируем."
+                fi
+            fi
+        done
+    fi
+
+    # 3. Запуск нового бота
     nohup "$PYTHON_EXEC" -u "$PROJECT_DIR/$BOT_SCRIPT" "${EXTRA_ARGS[@]}" > "$NOHUP_LOG" 2>&1 &
     local new_pid=$!
 
