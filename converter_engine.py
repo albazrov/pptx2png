@@ -147,6 +147,7 @@ def process_file_local(pptx_path, args):
 
     current_pptx = pptx_path
     temp_dark_pptx = None
+    zip_path = None  # ← инициализация
     try:
         if args.dark_mode:
             temp_dark_pptx = file_output_dir / f"temp_dark_{pptx_path.name}"
@@ -161,11 +162,15 @@ def process_file_local(pptx_path, args):
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for file in generated_pngs:
                     zipf.write(file, arcname=file.name)
+            # ZIP создан, путь сохранён в zip_path
 
         if not args.keep_pdf and pdf_path.exists():
             pdf_path.unlink()
         if temp_dark_pptx and temp_dark_pptx.exists():
             temp_dark_pptx.unlink()
+
+        # ✅ ВОЗВРАЩАЕМ ПУТЬ К ZIP (или None, если архивация не выполнялась)
+        return zip_path
 
     except Exception as e:
         if temp_dark_pptx and temp_dark_pptx.exists():
