@@ -71,7 +71,7 @@ kill_with_wait() {
 
     if ! is_valid_process "$pid" "$expected_starttime"; then
         echo "⚠️ Процесс $pid не соответствует ожидаемому (starttime не совпадает). Пропускаем."
-        return 1
+        return 0   # Возвращаем 0, т.к. процесс уже не тот, которого мы ждали
     fi
 
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -87,7 +87,7 @@ kill_with_wait() {
         if [ $waited -ge $timeout ]; then
             echo "⚠️ $name не завершился за ${timeout}с, принудительно завершаем..."
             kill -9 "$pid"
-            # Ждём ещё до 5 секунд после SIGKILL
+            # Ждём до 5 секунд после SIGKILL
             local kill_waited=0
             while kill -0 "$pid" 2>/dev/null && [ $kill_waited -lt 5 ]; do
                 sleep 1
@@ -107,6 +107,69 @@ kill_with_wait() {
 
     echo "✅ $name завершён"
     return 0
+}
+
+# --------------------------------------------
+# Остановка одного legacy-процесса по PID
+# Использует starttime для идентификации
+# --------------------------------------------
+stop_legacy_process() {
+    local pid=$1
+    local name=${2:-"legacy-процесс"}
+
+    # Получаем текущий starttime процесса
+    local original_starttime=$(get_process_starttime "$pid")
+    if [ -z "$original_starttime" ]; then
+        # Процесс уже мёртв
+        echo "ℹ️ $name (PID $pid) уже не активен"
+        return 0
+    fi
+
+    echo "⏳ Остановка $name (PID $pid)..."
+
+    # Отправляем SIGTERM
+    kill "$pid" 2>/dev/null
+
+    # Ждём до 5 секунд для graceful завершения
+    local waited=0
+    while [ $waited -lt 5 ]; do
+        if ! is_valid_process "$pid" "$original_starttime"; then
+            echo "✅ $name (PID $pid) завершён (starttime изменился или процесс мёртв)"
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    # Если процесс с тем же starttime всё ещё жив, принудительно завершаем
+    if is_valid_process "$pid" "$original_starttime"; then
+        echo "⚠️ $name не завершился gracefully, принудительно завершаем..."
+        kill -9 "$pid" 2>/dev/null
+
+        # Ждём до 5 секунд после SIGKILL
+        local kill_waited=0
+        while [ $kill_waited -lt 5 ]; do
+            if ! is_valid_process "$pid" "$original_starttime"; then
+                echo "✅ $name (PID $pid) принудительно завершён"
+                return 0
+            fi
+            sleep 1
+            kill_waited=$((kill_waited + 1))
+        done
+
+        # Если после SIGKILL процесс с тем же starttime всё ещё жив — ошибка
+        if is_valid_process "$pid" "$original_starttime"; then
+            echo "❌ Не удалось завершить $name (PID $pid)"
+            return 1
+        else
+            echo "✅ $name (PID $pid) завершён"
+            return 0
+        fi
+    else
+        # Процесс завершился в процессе ожидания (starttime изменился)
+        echo "✅ $name (PID $pid) завершён"
+        return 0
+    fi
 }
 
 # --------------------------------------------
@@ -171,7 +234,6 @@ cmd_stop() {
                 kill_with_wait "$saved_pid" "$saved_starttime" 10 "бот из PID-файла"
                 if [ $? -eq 0 ]; then
                     rm -f "$PID_FILE"
-                    stop_success=0
                 else
                     echo "❌ Не удалось остановить процесс из PID-файла"
                     return 1
@@ -199,37 +261,14 @@ cmd_stop() {
                 fi
             fi
 
+            # Проверяем, что процесс действительно принадлежит этому проекту
             local cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
             if [[ "$cmdline" == *"$PROJECT_DIR/$BOT_SCRIPT"* ]]; then
-                echo "⏳ Остановка legacy-процесса $pid..."
-                kill "$pid"
-
-                # Ждём до 3 секунд для graceful завершения
-                local waited=0
-                while kill -0 "$pid" 2>/dev/null && [ $waited -lt 3 ]; do
-                    sleep 1
-                    waited=$((waited + 1))
-                done
-
-                if kill -0 "$pid" 2>/dev/null; then
-                    echo "⚠️ Процесс $pid не завершился gracefully, принудительно завершаем..."
-                    kill -9 "$pid"
-
-                    # Ждём до 5 секунд после SIGKILL
-                    local kill_waited=0
-                    while kill -0 "$pid" 2>/dev/null && [ $kill_waited -lt 5 ]; do
-                        sleep 1
-                        kill_waited=$((kill_waited + 1))
-                    done
-
-                    if kill -0 "$pid" 2>/dev/null; then
-                        echo "❌ Не удалось завершить процесс $pid даже после SIGKILL"
-                        return 1
-                    else
-                        echo "✅ Legacy-процесс $pid принудительно завершён"
-                    fi
-                else
-                    echo "✅ Legacy-процесс $pid завершён gracefully"
+                # Останавливаем legacy-процесс с проверкой starttime
+                stop_legacy_process "$pid" "legacy-процесс $pid"
+                if [ $? -ne 0 ]; then
+                    echo "❌ Не удалось остановить legacy-процесс $pid"
+                    return 1
                 fi
             else
                 echo "ℹ️ Процесс $pid не относится к этому боту (пропускаем)."
@@ -239,6 +278,7 @@ cmd_stop() {
         echo "ℹ️ Legacy-процессы не найдены"
     fi
 
+    # Удаляем PID-файл, если он ещё существует (на случай, если он остался)
     rm -f "$PID_FILE"
     echo "✅ Все процессы остановлены"
     return 0
