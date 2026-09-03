@@ -1,0 +1,120 @@
+name: CI/CD pptx2png
+
+# Запуск при пуше в ветки test или main
+on:
+  push:
+    branches:
+      - test
+      - main
+
+# Разрешаем запись в репозиторий (для коммита логов)
+permissions:
+  contents: write
+
+jobs:
+  deploy-and-test:
+    # Используем self-hosted раннер на Raspberry Pi
+    runs-on: [self-hosted, raspberry]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --- БЛОК ДЛЯ ТЕСТОВОЙ ВЕТКИ ---
+      - name: Deploy and Start Test Bot
+        if: github.ref == 'refs/heads/test'
+        run: |
+         # 1. Синхронизация кода
+         rsync -av --delete \
+          --exclude='.git*' \
+          --exclude='config*' \
+          --exclude='allowed_users*' \
+          --exclude='debug.log' \
+          ./ /home/pi/app/pptx2png/test/
+    
+         # 2. Подготовка директорий для логов (в оперативной памяти)
+         mkdir -p /dev/shm/pptx2png/test/logs
+        
+         # 3. Директория для хранения PID текущего процесса
+         mkdir -p /home/pi/app/pptx2png/test/.run_state
+         PID_FILE="/home/pi/app/pptx2png/test/.run_state/bot.pid"
+    
+         # 4. Остановка старого процесса ТОЛЬКО если его PID записан в файл
+         if [ -f "$PID_FILE" ]; then
+           OLD_PID=$(cat "$PID_FILE")
+           # Проверяем, существует ли процесс с таким ID
+           if ps -p $OLD_PID > /dev/null; then
+             echo "Found running bot with PID $OLD_PID. Stopping..."
+             kill $OLD_PID
+             sleep 2
+            
+             # Принудительная остановка, если старый процесс висит мертвым телом
+             if ps -p $OLD_PID > /dev/null; then
+               kill -9 $OLD_PID
+             fi
+           else
+             echo "Old PID file found ($OLD_PID), but process is dead. Cleaning up."
+           fi
+           rm -f "$PID_FILE"
+         fi
+    
+         # 5. Переходим в рабочую директорию
+         cd /home/pi/app/pptx2png/test/
+     
+         # 6. ЗАПУСК В ФОНЕ
+         # Используем env для передачи переменных запуска
+         # Лог пишется в /dev/shm
+         nohup env RUNNER_TRACKING_ID=0 /home/pi/.venv/bin/python3 bot.py > /dev/shm/pptx2png/test/logs/test_bot.log 2>&1 &
+     
+         # 7. Сохраняем новый PID в файл для последующей корректной остановки
+         echo $! > "$PID_FILE"
+     
+         # 8. Проверка здоровья (Healthcheck)
+         sleep 5
+        
+         NEW_PID=$(cat "$PID_FILE")
+         if ps -p $NEW_PID > /dev/null; then
+           echo "✅ Test бот успешно перезапущен (PID: $NEW_PID)."
+           echo "Логи доступны в RAM: /dev/shm/pptx2png/test/logs/"
+         else
+           echo "❌ Не удалось запустить test бота. Процесс упал сразу после старта."
+           tail -n 10 /dev/shm/pptx2png/test/logs/test_bot.log
+           exit 1
+         fi
+
+      # --- БЛОК ДЛЯ ПРОДАКШН-ВЕТКИ (MAIN) ---
+      - name: Deploy to Production Branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # 1. Синхронизация кода в продовскую директорию
+          #    --delete удаляет устаревшие файлы, сохраняя только актуальные
+          #    Исключаем конфиги и логи, чтобы не затереть локальные секреты
+          rsync -av --delete \
+                --exclude='.git*' \
+                --exclude='config*' \
+                --exclude='allowed_users*' \
+                --exclude='debug.log' \
+                ./ /home/pi/app/pptx2png/prod/
+          
+          # 2. Переходим в папку продакшн-бота
+          cd /home/pi/app/pptx2png/prod/
+          
+          # 3. Даём права на выполнение manage.sh
+          chmod +x manage.sh
+          
+          # 4. Перезапускаем бота (без маскировки ошибок!)
+          #    Если restart вернёт ненулевой код, сборка прервётся.
+          env RUNNER_TRACKING_ID=0 ./manage.sh restart
+          
+          # 5. Ждём пару секунд, чтобы процесс успел запуститься
+          sleep 2
+          
+          # 6. Проверяем статус бота.
+          #    Если manage.sh status вернёт 0 (бот работает) — успех.
+          #    Иначе — помечаем шаг как неудачный и останавливаем сборку.
+          if ./manage.sh status; then
+            echo "✅ Production бот успешно запущен"
+          else
+            echo "❌ Не удалось запустить production бота"
+            exit 1
+          fi
