@@ -1059,7 +1059,15 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
     success = False
     
     try:
-        download_success = await download_file_by_url(url, file_path, status_msg)
+        # Проверяем, является ли ссылка Яндекс.Диском
+        is_yandex_disk = "disk.yandex" in url or "yadi.sk" in url
+    
+        if is_yandex_disk:
+            # Используем функцию для Яндекс.Диска
+            download_success = await download_yandex_disk(url, file_path)
+        else:
+            #  существующая логика (Google Docs и т.д.)
+            download_success = await download_file_by_url(url, file_path, status_msg)
         if not download_success:
             await status_msg.edit_text("❌ Не удалось скачать файл по ссылке.")
             return  # finally удалит папку
