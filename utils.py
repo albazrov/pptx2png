@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Tuple, List, Optional
 from aiogram import Bot, types
 from pptx import Presentation
+from urllib.parse import urlencode
 
 # Импортируем ваш существующий движок рендеринга
 import converter_engine
@@ -116,6 +117,43 @@ def extract_text_from_pptx(file_path: str) -> Tuple[bool, List[str]]:
 # ==========================================
 # 3. СКАЧИВАНИЕ ПО ССЫЛКЕ
 # ==========================================
+
+async def download_yandex_disk(url: str, destination):
+    """
+    Скачивает файл по публичной ссылке Яндекс.Диска.
+    
+    :param url: Публичная ссылка (например, https://disk.yandex.ru/d/xxxxx)
+    :param destination: Путь для сохранения файла (Path или str)
+    :return: True при успехе, False при ошибке
+    """
+    # 1. Получаем прямую ссылку на скачивание через API
+    api_url = "https://cloud-api.yandex.net/v1/disk/public/resources/download"
+    params = {"public_key": url}
+    
+    async with aiohttp.ClientSession() as session:
+        # Шаг 1: Запрос к API для получения href (прямой ссылки)
+        async with session.get(api_url, params=params, timeout=10) as resp:
+            if resp.status != 200:
+                logging.error(f"Яндекс.Диск API вернул ошибку: {resp.status}")
+                return False
+            
+            data = await resp.json()
+            direct_url = data.get("href")
+            
+            if not direct_url:
+                logging.error("Не удалось получить прямую ссылку с Яндекс.Диска")
+                return False
+        
+        # Шаг 2: Скачиваем файл по прямой ссылке
+        async with session.get(direct_url, timeout=60) as file_resp:
+            if file_resp.status != 200:
+                logging.error(f"Ошибка скачивания с Яндекс.Диска: {file_resp.status}")
+                return False
+            
+            with open(destination, "wb") as f:
+                f.write(await file_resp.read())
+            
+            return True
 
 async def download_file_by_url(url: str, destination: Path, status_message: types.Message) -> bool:
     """ Скачивает презентацию по HTTP-ссылке напрямую в RAM-диск (SHM). """
