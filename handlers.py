@@ -16,7 +16,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from utils import extract_text_from_pptx, check_spelling, download_file_by_url, core_pipeline
+from utils import extract_text_from_pptx, check_spelling, download_file_by_url, download_yandex_disk, core_pipeline
 import converter_engine
 from converter_engine import make_dark_mode
 
@@ -1059,15 +1059,16 @@ async def handle_links(message: types.Message, bot: Bot, SHM_DIR: str, check_acc
     success = False
     
     try:
-        # Проверяем, является ли ссылка Яндекс.Диском
-        is_yandex_disk = "disk.yandex" in url or "yadi.sk" in url
-    
-        if is_yandex_disk:
-            # Используем функцию для Яндекс.Диска
+        # ✅ Определяем тип ссылки
+        if "disk.yandex" in url or "yadi.sk" in url:
+            # Яндекс.Диск
+            await status_msg.edit_text("🌐 Скачивание с Яндекс.Диска...")
             download_success = await download_yandex_disk(url, file_path)
         else:
-            #  существующая логика (Google Docs и т.д.)
-            download_success = await download_file_by_url(url, file_path, status_msg)
+            # Google Docs и другие — используем существующую логику
+            direct_url = converter_engine.convert_to_direct_download(url)
+            download_success = await download_file_by_url(direct_url, file_path, status_msg)
+            
         if not download_success:
             await status_msg.edit_text("❌ Не удалось скачать файл по ссылке.")
             return  # finally удалит папку
