@@ -118,42 +118,56 @@ def extract_text_from_pptx(file_path: str) -> Tuple[bool, List[str]]:
 # 3. СКАЧИВАНИЕ ПО ССЫЛКЕ
 # ==========================================
 
-async def download_yandex_disk(url: str, destination):
+# ==========================================
+# СКАЧИВАНИЕ С ЯНДЕКС.ДИСКА
+# ==========================================
+
+async def download_yandex_disk(url: str, destination: Path) -> bool:
     """
     Скачивает файл по публичной ссылке Яндекс.Диска.
     
-    :param url: Публичная ссылка (например, https://disk.yandex.ru/d/xxxxx)
-    :param destination: Путь для сохранения файла (Path или str)
+    :param url: Публичная ссылка (например, https://disk.yandex.ru/i/... или https://yadi.sk/i/...)
+    :param destination: Путь для сохранения файла
     :return: True при успехе, False при ошибке
     """
-    # 1. Получаем прямую ссылку на скачивание через API
     api_url = "https://cloud-api.yandex.net/v1/disk/public/resources/download"
     params = {"public_key": url}
     
-    async with aiohttp.ClientSession() as session:
-        # Шаг 1: Запрос к API для получения href (прямой ссылки)
-        async with session.get(api_url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                logging.error(f"Яндекс.Диск API вернул ошибку: {resp.status}")
-                return False
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Шаг 1: Получаем прямую ссылку на скачивание через API
+            async with session.get(api_url, params=params, timeout=10) as resp:
+                if resp.status != 200:
+                    logging.error(f"Яндекс.Диск API вернул ошибку: {resp.status}")
+                    return False
+                
+                data = await resp.json()
+                direct_url = data.get("href")
+                
+                if not direct_url:
+                    logging.error("Не удалось получить прямую ссылку с Яндекс.Диска")
+                    return False
             
-            data = await resp.json()
-            direct_url = data.get("href")
-            
-            if not direct_url:
-                logging.error("Не удалось получить прямую ссылку с Яндекс.Диска")
-                return False
-        
-        # Шаг 2: Скачиваем файл по прямой ссылке
-        async with session.get(direct_url, timeout=60) as file_resp:
-            if file_resp.status != 200:
-                logging.error(f"Ошибка скачивания с Яндекс.Диска: {file_resp.status}")
-                return False
-            
-            with open(destination, "wb") as f:
-                f.write(await file_resp.read())
-            
-            return True
+            # Шаг 2: Скачиваем файл по прямой ссылке
+            async with session.get(direct_url, timeout=120) as file_resp:
+                if file_resp.status != 200:
+                    logging.error(f"Ошибка скачивания с Яндекс.Диска: {file_resp.status}")
+                    return False
+                
+                with open(destination, "wb") as f:
+                    f.write(await file_resp.read())
+                
+                return True
+                
+    except asyncio.TimeoutError:
+        logging.error(f"Таймаут при скачивании с Яндекс.Диска: {url}")
+        return False
+    except aiohttp.ClientError as e:
+        logging.error(f"Ошибка клиента при скачивании с Яндекс.Диска: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"Исключение при скачивании с Яндекс.Диска: {e}", exc_info=True)
+        return False
 
 async def download_file_by_url(url: str, destination: Path, status_message: types.Message) -> bool:
     """ Скачивает презентацию по HTTP-ссылке напрямую в RAM-диск (SHM). """
